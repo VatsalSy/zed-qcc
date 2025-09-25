@@ -20,6 +20,19 @@ impl BasiliskExtension {
         }
     }
 
+    fn normalize_basilisk_root(path: PathBuf) -> Option<PathBuf> {
+        if path.join("Makefile.defs").is_file() {
+            return Some(path);
+        }
+
+        let src_candidate = path.join("src");
+        if src_candidate.join("Makefile.defs").is_file() {
+            return Some(src_candidate);
+        }
+
+        None
+    }
+
     fn detect_environment(&mut self, worktree: &zed::Worktree) -> Result<()> {
         if self.clangd_path.is_none() {
             if let Some(path) = worktree.which("clangd") {
@@ -53,22 +66,34 @@ impl BasiliskExtension {
         }
 
         if let Ok(root) = std::env::var("BASILISK") {
-            let candidate = PathBuf::from(root).join("src/qcc");
-            if candidate.exists() {
-                return Some(candidate);
+            if let Some(include_dir) = Self::normalize_basilisk_root(PathBuf::from(root)) {
+                let candidate = include_dir.join("qcc");
+                if candidate.exists() {
+                    return Some(candidate);
+                }
             }
         }
 
         if let Ok(home) = std::env::var("HOME") {
-            let candidate = PathBuf::from(home).join("basilisk/src/qcc");
-            if candidate.exists() {
-                return Some(candidate);
+            let home_path = PathBuf::from(home);
+            for candidate in [home_path.join("basilisk"), home_path.join("basilisk/src")] {
+                if let Some(include_dir) = Self::normalize_basilisk_root(candidate) {
+                    let qcc = include_dir.join("qcc");
+                    if qcc.exists() {
+                        return Some(qcc);
+                    }
+                }
             }
         }
 
-        let repo_candidate = PathBuf::from(worktree.root_path()).join("basilisk/src/qcc");
-        if repo_candidate.exists() {
-            return Some(repo_candidate);
+        let repo_root = PathBuf::from(worktree.root_path());
+        for candidate in [repo_root.join("basilisk"), repo_root.join("basilisk/src")] {
+            if let Some(include_dir) = Self::normalize_basilisk_root(candidate) {
+                let qcc = include_dir.join("qcc");
+                if qcc.exists() {
+                    return Some(qcc);
+                }
+            }
         }
 
         None
@@ -76,21 +101,24 @@ impl BasiliskExtension {
 
     fn detect_basilisk_root(worktree: &zed::Worktree) -> Option<PathBuf> {
         if let Ok(path) = std::env::var("BASILISK") {
-            let candidate = PathBuf::from(&path);
-            if candidate.exists() {
-                return Some(candidate);
+            if let Some(include_dir) = Self::normalize_basilisk_root(PathBuf::from(path)) {
+                return Some(include_dir);
             }
         }
 
-        let repo_candidate = PathBuf::from(worktree.root_path()).join("basilisk/src");
-        if repo_candidate.exists() {
-            return Some(repo_candidate);
+        let repo_root = PathBuf::from(worktree.root_path());
+        for candidate in [repo_root.join("basilisk"), repo_root.join("basilisk/src")] {
+            if let Some(include_dir) = Self::normalize_basilisk_root(candidate) {
+                return Some(include_dir);
+            }
         }
 
         if let Ok(home) = std::env::var("HOME") {
-            let candidate = PathBuf::from(home).join("basilisk/src");
-            if candidate.exists() {
-                return Some(candidate);
+            let home_path = PathBuf::from(home);
+            for candidate in [home_path.join("basilisk"), home_path.join("basilisk/src")] {
+                if let Some(include_dir) = Self::normalize_basilisk_root(candidate) {
+                    return Some(include_dir);
+                }
             }
         }
 
