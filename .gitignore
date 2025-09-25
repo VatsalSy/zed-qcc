@@ -2,3 +2,4 @@ reset_install_requirements.sh
 basilisk
 **/.DS_Store
 **/.project_config
+zed-latex
