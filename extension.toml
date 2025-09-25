@@ -4,11 +4,11 @@ version = "0.1.0"
 schema_version = 1
 authors = ["Zed Basilisk Contributors"]
 description = "Basilisk C language support with qcc-powered clangd integration"
-repository = "https://example.com/zed-qcc"
+repository = "https://github.com/VatsalSy/zed-qcc"
 
 [grammars.basilisk]
 repository = "https://github.com/tree-sitter/tree-sitter-c"
-commit = "v0.20.7"
+rev = "71b718dec11d144c5a2734a19b7367162a55b1a6"
 
 [languages.basilisk]
 name = "Basilisk C"
@@ -23,3 +23,4 @@ word_characters = ["_"]
 name = "Basilisk Language Server"
 language = "Basilisk C"
 command = "clangd"
+args = ["--background-index", "--clang-tidy=false"]
