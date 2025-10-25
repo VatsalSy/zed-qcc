@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -9,6 +10,7 @@ struct BasiliskExtension {
     clangd_path: Option<String>,
     qcc_path: Option<PathBuf>,
     basilisk_root: Option<PathBuf>,
+    exclude_dirs: HashSet<String>,
 }
 
 impl BasiliskExtension {
@@ -17,7 +19,27 @@ impl BasiliskExtension {
             clangd_path: None,
             qcc_path: None,
             basilisk_root: None,
+            exclude_dirs: Self::load_exclude_dirs(),
         }
+    }
+
+    fn load_exclude_dirs() -> HashSet<String> {
+        let mut excludes = vec![
+            "target", "build", ".git", "node_modules", "dist", "out", "coverage", "bin",
+            "obj", ".vscode", ".idea", "CMakeFiles", "__pycache__", ".cache",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect::<HashSet<_>>();
+
+        // Load additional excludes from environment variable if set
+        if let Ok(env_excludes) = std::env::var("QCC_EXCLUDE_DIRS") {
+            for dir in env_excludes.split(',') {
+                excludes.insert(dir.trim().to_string());
+            }
+        }
+
+        excludes
     }
 
     fn normalize_basilisk_root(path: PathBuf) -> Option<PathBuf> {
@@ -100,24 +122,42 @@ impl BasiliskExtension {
     }
 
     fn detect_basilisk_root(worktree: &zed::Worktree) -> Option<PathBuf> {
+        // Check BASILISK_ROOT first (preferred new env var)
+        if let Ok(path) = std::env::var("BASILISK_ROOT") {
+            if let Some(src_dir) = Self::normalize_basilisk_root(PathBuf::from(path)) {
+                return Some(src_dir);
+            }
+        }
+
+        // Check BASILISK (legacy env var)
         if let Ok(path) = std::env::var("BASILISK") {
-            if let Some(include_dir) = Self::normalize_basilisk_root(PathBuf::from(path)) {
-                return Some(include_dir);
+            if let Some(src_dir) = Self::normalize_basilisk_root(PathBuf::from(path)) {
+                return Some(src_dir);
             }
         }
 
+        // Check worktree root
         let repo_root = PathBuf::from(worktree.root_path());
-        for candidate in [repo_root.join("basilisk"), repo_root.join("basilisk/src")] {
-            if let Some(include_dir) = Self::normalize_basilisk_root(candidate) {
-                return Some(include_dir);
+        let candidates = [
+            repo_root.join("basilisk/src"),
+            repo_root.join("basilisk"),
+        ];
+        for candidate in candidates {
+            if let Some(src_dir) = Self::normalize_basilisk_root(candidate) {
+                return Some(src_dir);
             }
         }
 
+        // Check HOME directory
         if let Ok(home) = std::env::var("HOME") {
             let home_path = PathBuf::from(home);
-            for candidate in [home_path.join("basilisk"), home_path.join("basilisk/src")] {
-                if let Some(include_dir) = Self::normalize_basilisk_root(candidate) {
-                    return Some(include_dir);
+            let candidates = [
+                home_path.join("basilisk/src"),
+                home_path.join("basilisk"),
+            ];
+            for candidate in candidates {
+                if let Some(src_dir) = Self::normalize_basilisk_root(candidate) {
+                    return Some(src_dir);
                 }
             }
         }
@@ -146,7 +186,7 @@ impl BasiliskExtension {
         let include_flag = self
             .basilisk_root
             .as_ref()
-            .map(|path| format!("-I{}", path.display()));
+            .map(|path| format!("-I\"{}\"", path.display()));
 
         #[derive(Serialize)]
         struct CompileCommand {
@@ -156,9 +196,10 @@ impl BasiliskExtension {
         }
 
         let mut entries = Vec::new();
+        let exclude_dirs = &self.exclude_dirs;
         for entry in WalkDir::new(&root_path)
             .into_iter()
-            .filter_entry(Self::is_included_directory)
+            .filter_entry(|e| Self::is_included_directory(e, exclude_dirs))
         {
             let entry = entry.with_context(|| "unable to walk workspace")?;
             if !entry.file_type().is_file() {
@@ -209,10 +250,17 @@ impl BasiliskExtension {
         Ok(())
     }
 
-    fn is_included_directory(entry: &DirEntry) -> bool {
+    fn is_included_directory(entry: &DirEntry, exclude_dirs: &HashSet<String>) -> bool {
         let name = entry.file_name().to_string_lossy();
-        matches!(name.as_ref(), "." | "..")
-            || !matches!(name.as_ref(), "target" | "build" | ".git" | "node_modules")
+        let name_str = name.as_ref();
+
+        // Always include . and .. for directory traversal
+        if matches!(name_str, "." | "..") {
+            return true;
+        }
+
+        // Exclude directories in the exclude set
+        !exclude_dirs.contains(name_str)
     }
 
     fn quote_path(path: &Path) -> String {
@@ -253,7 +301,9 @@ impl zed::Extension for BasiliskExtension {
 
         let mut env_entries = Vec::new();
         if let Some(root) = &self.basilisk_root {
-            env_entries.push(("BASILISK_ROOT".to_string(), root.display().to_string()));
+            let root_str = root.display().to_string();
+            env_entries.push(("BASILISK_ROOT".to_string(), root_str.clone()));
+            env_entries.push(("BASILISK".to_string(), root_str));
         }
 
         Ok(zed::Command {
@@ -274,7 +324,7 @@ impl zed::Extension for BasiliskExtension {
             "-Wextra".to_string(),
         ];
         if let Some(root) = &self.basilisk_root {
-            fallback_flags.push(format!("-I{}", root.display()));
+            fallback_flags.push(format!("-I\"{}\"", root.display()));
         }
 
         let config = serde_json::json!({
