@@ -18,10 +18,10 @@ fi
 
 CMD=("${QCC_BIN}" -Wall -O2 -disable-dimensions "${SOURCE}" -o "${OUTPUT}" -lm)
 if [[ -n "${QCC_OPENMP_FLAG:-}" ]]; then
-  CMD+=(${QCC_OPENMP_FLAG})
+  CMD+=("${QCC_OPENMP_FLAG}")
 fi
 if [[ -n "${QCC_MPI_DEFINE:-}" ]]; then
-  CMD+=(${QCC_MPI_DEFINE})
+  CMD+=("${QCC_MPI_DEFINE}")
 fi
 if [[ -n "${BASILISK_SRC}" ]]; then
   CMD+=(-I"${BASILISK_SRC}")
