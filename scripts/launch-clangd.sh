@@ -4,7 +4,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTENSION_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WORKSPACE_ROOT="${ZED_WORKTREE:-${PWD}}"
-BASILISK_SRC="${BASILISK:-${HOME}/basilisk/src}"
+
+# Determine BASILISK_SRC with priority: BASILISK_ROOT/src > BASILISK > default
+if [[ -n "${BASILISK_ROOT:-}" ]]; then
+  BASILISK_SRC="${BASILISK_ROOT}/src"
+elif [[ -n "${BASILISK:-}" ]]; then
+  BASILISK_SRC="${BASILISK}"
+else
+  BASILISK_SRC="${HOME}/basilisk/src"
+fi
+
 QCC_PATH="${QCC_PATH:-$(command -v qcc 2>/dev/null || true)}"
 
 mkdir -p "${WORKSPACE_ROOT}/build"
