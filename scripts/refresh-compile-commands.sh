@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "$#" -lt 3 ]; then
+  echo "Usage: $0 WORKSPACE_ROOT BASILISK_SRC QCC_BIN" >&2
+  exit 2
+fi
+
 WORKSPACE_ROOT="$1"
 BASILISK_SRC="$2"
 QCC_BIN="$3"
@@ -26,6 +31,12 @@ mapfile -t C_FILES < <(find "${WORKSPACE_ROOT}" -maxdepth 2 -name '*.c' -not -pa
     command="${QCC_BIN} -Wall -O2 -disable-dimensions \"${file_path}\" -o \"${dir_path}/${output_name}\" -lm"
     if [[ -n "${BASILISK_SRC}" ]]; then
       command+=" -I\"${BASILISK_SRC}\""
+    fi
+    if [[ -n "${QCC_OPENMP_FLAG:-}" ]]; then
+      command+=" ${QCC_OPENMP_FLAG}"
+    fi
+    if [[ -n "${QCC_MPI_DEFINE:-}" ]]; then
+      command+=" ${QCC_MPI_DEFINE}"
     fi
     if [[ ${first} -eq 0 ]]; then
       echo ","
