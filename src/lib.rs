@@ -160,7 +160,7 @@ impl zed::Extension for BasiliskExtension {
         if let Some(cli_path) = worktree.which(CLI_SERVER_BINARY) {
             return Ok(zed::Command {
                 command: cli_path,
-                args: vec!["--stdio".to_string()],
+                args: vec![],
                 env: vec![],
             });
         }
@@ -172,7 +172,7 @@ impl zed::Extension for BasiliskExtension {
 
         Ok(zed::Command {
             command: node,
-            args: vec![server_script, "--stdio".to_string()],
+            args: vec![server_script],
             env: vec![],
         })
     }
