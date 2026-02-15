@@ -1,6 +1,6 @@
 name = "Basilisk C"
 scope = "source.basilisk"
-grammar = "basilisk"
+grammar = "c"
 path_suffixes = ["c", "h"]
 line_comments = ["//"]
 block_comment = ["/*", "*/"]

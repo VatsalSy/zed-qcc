@@ -7,10 +7,6 @@ description = "Basilisk C language support powered by qcc-lsp"
 repository = "https://github.com/VatsalSy/zed-qcc"
 languages = ["languages/basilisk/config.toml"]
 
-[grammars.basilisk]
-repository = "https://github.com/tree-sitter/tree-sitter-c"
-rev = "71b718dec11d144c5a2734a19b7367162a55b1a6"
-
 [language_servers.qcc-lsp]
 name = "qcc-lsp"
 language = "Basilisk C"
