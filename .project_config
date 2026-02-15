@@ -1,2 +1,0 @@
-export BASILISK=/Users/vatsal/Documents/1-github/localApps/zed-qcc/basilisk/src
-export PATH=$PATH:$BASILISK
