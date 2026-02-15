@@ -4,6 +4,7 @@ target/
 node_modules/
 /basilisk/
 /grammars/
+/extension.wasm
 CLAUDE.md
 client/node_modules/
 server/node_modules/
