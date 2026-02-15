@@ -35,63 +35,59 @@ Snapshot provenance is recorded in:
 
 - `lsp/UPSTREAM.txt`
 
-## Zed Configuration
+## How To Use qcc-lsp In Zed
 
-### Server settings
+### 1. Install this repository as a Zed dev extension
 
-Configure server behavior under `lsp.qcc-lsp.settings`.
-These settings are forwarded as workspace config under the server section `basilisk`.
+Open Zed command palette and install dev extension from this repository path:
 
-Example:
-
-```json
-{
-  "lsp": {
-    "qcc-lsp": {
-      "settings": {
-        "qccPath": "qcc",
-        "basiliskPath": "/path/to/basilisk/src",
-        "enableDiagnostics": true,
-        "diagnosticsOnSave": true,
-        "diagnosticsOnType": false,
-        "maxNumberOfProblems": 100,
-        "qcc": {
-          "includePaths": ["src-local"]
-        },
-        "clangd": {
-          "enabled": true,
-          "mode": "proxy",
-          "path": "clangd",
-          "args": [],
-          "compileCommandsDir": "",
-          "fallbackFlags": [],
-          "diagnosticsMode": "filtered"
-        }
-      }
-    }
-  }
-}
+```text
+/Users/vatsal/1-github/1-LSPs/zed-qcc
 ```
 
-### Optional binary override
+### 2. Ensure bundled server files are available in Zed work dir
 
-If you want to run a custom server binary/command instead of bundled `lsp/server.js`:
+For dev installs, copy bundled server JS files into Zed extension work directory:
+
+```bash
+mkdir -p "/Users/vatsal/Library/Application Support/Zed/extensions/work/basilisk/lsp"
+rsync -a --delete lsp/ "/Users/vatsal/Library/Application Support/Zed/extensions/work/basilisk/lsp/"
+```
+
+### 3. Configure Zed settings (`~/.config/zed/settings.json`)
+
+Use Node + bundled server entrypoint:
 
 ```json
 {
   "lsp": {
     "qcc-lsp": {
       "binary": {
-        "path": "/absolute/path/to/node-or-server-command",
-        "arguments": ["/absolute/path/to/server.js", "--stdio"],
-        "env": {
-          "BASILISK": "/path/to/basilisk/src"
+        "path": "/Users/vatsal/.nvm/versions/node/v22.16.0/bin/node",
+        "arguments": [
+          "/Users/vatsal/Library/Application Support/Zed/extensions/work/basilisk/lsp/server.js",
+          "--stdio"
+        ]
+      },
+      "settings": {
+        "qccPath": "qcc",
+        "basiliskPath": "/Users/vatsal/CMP-codes/basilisk",
+        "clangd": {
+          "mode": "proxy"
         }
       }
     }
   }
 }
 ```
+
+Server options under `lsp.qcc-lsp.settings` are forwarded to the language server as the `basilisk` section.
+
+### 4. Open Basilisk files
+
+- Open `.c` or `.h` file.
+- Confirm language is `Basilisk C` in the status bar.
+- If needed, select language manually once; `.c/.h` association is included in this extension.
 
 ## Language Association
 
@@ -103,6 +99,12 @@ The extension associates `.c` and `.h` with `Basilisk C` in extension metadata.
   - Set `lsp.qcc-lsp.settings.qccPath` to an explicit binary path.
 - Basilisk headers unresolved:
   - Set `lsp.qcc-lsp.settings.basiliskPath` and/or `qcc.includePaths`.
+- `bundled qcc-lsp entrypoint not found`:
+  - Re-sync `lsp/` into `/Users/vatsal/Library/Application Support/Zed/extensions/work/basilisk/lsp/`.
+- `Connection input stream is not set`:
+  - Ensure server launch includes `--stdio`.
+- `Unknown command: --stdio`:
+  - Do not point `binary.path` to CLI `qcc-lsp`; use Node + `server.js` as shown above.
 - clangd fallback behavior:
   - Use `lsp.qcc-lsp.settings.clangd.mode` (`proxy`, `augment`, `disabled`).
 - Project-local overrides:
