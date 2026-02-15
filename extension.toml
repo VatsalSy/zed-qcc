@@ -1,6 +1,6 @@
 id = "basilisk"
 name = "Basilisk C"
-version = "0.2.2"
+version = "0.2.3"
 schema_version = 1
 authors = ["Zed Basilisk Contributors"]
 description = "Basilisk C language support powered by qcc-lsp"
