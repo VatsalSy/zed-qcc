@@ -56,6 +56,7 @@ const MAX_LOOKAHEAD_LINES = 40;
 let docRootKey = null;
 let docIndex = new Map();
 let loading = null;
+let loadGeneration = 0;
 /**
  * Ensures documentation is indexed for the given roots.
  *
@@ -66,6 +67,7 @@ let loading = null;
 async function ensureBasiliskDocs(roots) {
     const docRoots = resolveDocRoots(roots);
     if (docRoots.length === 0) {
+        loadGeneration++;
         docRootKey = null;
         docIndex = new Map();
         return;
@@ -80,10 +82,14 @@ async function ensureBasiliskDocs(roots) {
             await existing;
             continue;
         }
+        const generation = ++loadGeneration;
         loading = (async () => {
             const roots = docRoots;
             const key = nextKey;
             const nextIndex = await buildDocIndex(roots);
+            if (generation !== loadGeneration) {
+                return;
+            }
             docIndex = nextIndex;
             docRootKey = key;
         })();
@@ -346,6 +352,11 @@ function parseGlobalsFromFile(content, filePath) {
         const parts = splitTopLevelCommas(declarations);
         const docComment = findDocCommentAbove(lines, i);
         for (const part of parts) {
+            const parenIndex = part.indexOf('(');
+            const equalsIndex = part.indexOf('=');
+            if (parenIndex !== -1 && (equalsIndex === -1 || parenIndex < equalsIndex)) {
+                continue;
+            }
             const parsed = parseDeclaration(part);
             if (!parsed) {
                 continue;

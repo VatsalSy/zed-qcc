@@ -15,7 +15,10 @@ const BASILISK_TOKENS = [
     ...basiliskLanguage_1.CONSTANTS,
     ...basiliskLanguage_1.LOOP_VARIABLES
 ];
-const BASILISK_TOKEN_REGEX = new RegExp(`\\b(${BASILISK_TOKENS.join('|')})\\b`);
+function escapeRegexToken(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+const BASILISK_TOKEN_REGEX = new RegExp(`\\b(${BASILISK_TOKENS.map(escapeRegexToken).join('|')})\\b`);
 const BASILISK_INCLUDE_REGEX = /#\s*include\s*[<"](?:grid\/|navier-stokes\/|two-phase|two-phase-generic|vof|run|events|common|utils|embed|curvature|fractions|conservation|view|output|draw)\.h/;
 const NOISE_PATTERNS = [
     /unknown type name/i,

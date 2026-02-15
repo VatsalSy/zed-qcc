@@ -89,6 +89,9 @@ function resolveExecutableOnPath(command) {
         if (hasExt) {
             const fullPath = path.join(dir, expanded);
             if (fs.existsSync(fullPath)) {
+                if (!fs.statSync(fullPath).isFile()) {
+                    continue;
+                }
                 if (isWindows) {
                     return fullPath;
                 }
@@ -106,6 +109,9 @@ function resolveExecutableOnPath(command) {
             const candidate = `${expanded}${ext}`;
             const fullPath = path.join(dir, candidate);
             if (!fs.existsSync(fullPath)) {
+                continue;
+            }
+            if (!fs.statSync(fullPath).isFile()) {
                 continue;
             }
             if (isWindows) {

@@ -485,7 +485,9 @@ function buildClangdConfigKey(settings, args, compileCommandsDir) {
 }
 async function ensureClangd(settings, qccAvailable) {
     const clangdSettings = settings.clangd;
-    const shouldEnable = clangdSettings.enabled && clangdSettings.mode === 'proxy' && !qccAvailable;
+    const mode = clangdSettings.mode;
+    const shouldEnable = clangdSettings.enabled &&
+        (mode === 'augment' || (mode === 'proxy' && !qccAvailable));
     if (!shouldEnable) {
         await stopClangd();
         return;
@@ -578,8 +580,9 @@ async function stopClangd() {
     clangdDiagnosticsGeneration.clear();
 }
 function shouldProxyToClangd(settings) {
+    const mode = settings.clangd.mode;
     return (settings.clangd.enabled &&
-        settings.clangd.mode === 'proxy' &&
+        (mode === 'proxy' || mode === 'augment') &&
         clangdClient !== null &&
         clangdClient.isReady());
 }

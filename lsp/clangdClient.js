@@ -81,6 +81,9 @@ class ClangdClient {
         this.process.kill();
         this.process = null;
         this.ready = false;
+        for (const pending of this.pending.values()) {
+            pending.reject(new Error('clangd stopped'));
+        }
         this.pending.clear();
         this.queuedNotifications = [];
     }

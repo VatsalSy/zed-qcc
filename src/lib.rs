@@ -49,18 +49,24 @@ impl BasiliskExtension {
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
 
-            if let Err(err) = zed::npm_install_package(package, version) {
-                let fallback = zed::npm_package_installed_version(package)?;
-                if fallback.is_none() {
-                    let message = format!(
-                        "failed to install required npm package '{package}@{version}': {err}"
-                    );
-                    zed::set_language_server_installation_status(
-                        language_server_id,
-                        &zed::LanguageServerInstallationStatus::Failed(message.clone()),
-                    );
-                    return Err(message);
-                }
+            let install_error = zed::npm_install_package(package, version).err();
+            let resolved_version = zed::npm_package_installed_version(package)?;
+            if resolved_version.as_deref() != Some(version) {
+                let found = resolved_version.unwrap_or_else(|| "not installed".to_string());
+                let message = if let Some(err) = install_error {
+                    format!(
+                        "failed to install required npm package '{package}@{version}': {err}; found '{found}'"
+                    )
+                } else {
+                    format!(
+                        "required npm package '{package}@{version}' is unavailable after install attempt; found '{found}'"
+                    )
+                };
+                zed::set_language_server_installation_status(
+                    language_server_id,
+                    &zed::LanguageServerInstallationStatus::Failed(message.clone()),
+                );
+                return Err(message);
             }
         }
 
@@ -199,7 +205,23 @@ impl zed::Extension for BasiliskExtension {
         worktree: &zed::Worktree,
     ) -> Result<Option<Value>> {
         let settings = Self::get_lsp_settings(worktree);
-        let user_settings = settings.settings.unwrap_or_else(|| json!({}));
+        let mode = extract_clangd_mode(settings.settings.as_ref());
+        let mut user_settings = settings.settings.unwrap_or_else(|| json!({}));
+        if !user_settings.is_object() {
+            user_settings = json!({});
+        }
+
+        if let Value::Object(root) = &mut user_settings {
+            let clangd_value = root
+                .entry("clangd".to_string())
+                .or_insert_with(|| json!({}));
+            if !clangd_value.is_object() {
+                *clangd_value = json!({});
+            }
+            if let Value::Object(clangd_obj) = clangd_value {
+                clangd_obj.insert("mode".to_string(), Value::String(mode));
+            }
+        }
 
         Ok(Some(json!({
             "basilisk": user_settings,

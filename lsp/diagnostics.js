@@ -51,6 +51,7 @@ const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const vscode_languageserver_1 = require("vscode-languageserver");
+const vscode_uri_1 = require("vscode-uri");
 const projectConfig_1 = require("./projectConfig");
 const pathUtils_1 = require("./pathUtils");
 exports.defaultSettings = {
@@ -167,6 +168,18 @@ function resolveQccPath(settings) {
     }
     return null;
 }
+function uriToFsPath(documentUri) {
+    try {
+        const parsed = vscode_uri_1.URI.parse(documentUri);
+        if (parsed.scheme === 'file') {
+            return parsed.fsPath;
+        }
+    }
+    catch {
+        // Fall through to raw input for non-standard URI formats.
+    }
+    return documentUri;
+}
 /**
  * Create a Diagnostic from parsed error
  */
@@ -192,15 +205,13 @@ async function runDiagnostics(documentUri, content, settings, logger) {
     const diagnostics = [];
     const resolvedQccPath = resolveQccPath(settings) || settings.qccPath;
     let tempFile = null;
-    const originalPath = documentUri.startsWith('file://')
-        ? documentUri.replace('file://', '')
-        : documentUri;
+    const originalPath = uriToFsPath(documentUri);
     const originalDir = path.dirname(originalPath);
     const srcLocalDir = (0, projectConfig_1.findSrcLocalDir)(originalDir);
     try {
         // Create a temporary file with the content
         const tempRoot = os.tmpdir();
-        const fileName = path.basename(documentUri);
+        const fileName = path.basename(originalPath);
         tempFile = path.join(tempRoot, `basilisk_${Date.now()}_${fileName}`);
         // Ensure the temp file has .c extension for qcc
         if (!tempFile.endsWith('.c')) {
@@ -252,9 +263,9 @@ async function runDiagnostics(documentUri, content, settings, logger) {
         for (const parsed of parsedDiagnostics) {
             // Match if the file is our temp file or the original file
             const parsedBase = path.basename(parsed.file);
-            if (parsedBase === baseFileName ||
-                parsedBase === path.basename(documentUri) ||
-                parsed.file.includes(baseFileName)) {
+                if (parsedBase === baseFileName ||
+                    parsedBase === path.basename(originalPath) ||
+                    parsed.file.includes(baseFileName)) {
                 const diagnostic = createDiagnostic(parsed);
                 diagnostics.push(diagnostic);
                 if (diagnostics.length >= settings.maxNumberOfProblems) {

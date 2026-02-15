@@ -809,7 +809,11 @@ function createCompletionItems() {
         insertTextFormat: vscode_languageserver_1.InsertTextFormat.Snippet
     });
     // Functions
+    const snippetOverrides = new Set(['adapt_wavelet']);
     for (const func of exports.BUILTIN_FUNCTIONS) {
+        if (snippetOverrides.has(func)) {
+            continue;
+        }
         const doc = exports.DOCUMENTATION[func];
         items.push({
             label: func,

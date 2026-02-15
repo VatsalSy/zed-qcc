@@ -13,6 +13,5 @@ server/out/
 out/
 dist/
 *.tsbuildinfo
-.DS_Store
 **/.comphy-basilisk
 .project_config

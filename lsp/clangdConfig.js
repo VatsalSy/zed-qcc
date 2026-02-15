@@ -81,7 +81,11 @@ function resolveBasiliskRoot(settings, rootPath) {
     }
     const qccResolved = (0, pathUtils_1.resolveExecutableOnPath)(settings.qccPath) || (0, pathUtils_1.resolveExecutableOnPath)('qcc');
     if (qccResolved) {
-        return path.dirname(qccResolved);
+        const qccDir = path.dirname(qccResolved);
+        if (path.basename(qccDir).toLowerCase() === 'bin') {
+            return path.dirname(qccDir);
+        }
+        return qccDir;
     }
     return null;
 }

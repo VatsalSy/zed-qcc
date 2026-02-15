@@ -89,13 +89,13 @@ function extractSymbols(document) {
     // Track brace depth for scope
     let braceDepth = 0;
     let currentContainer = null;
+    let inBlockComment = false;
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
         const line = lines[lineNum];
         // Update brace depth, ignoring braces inside strings and comments
         let inString = false;
         let inChar = false;
         let inLineComment = false;
-        let inBlockComment = false;
         let escaped = false;
         for (let i = 0; i < line.length; i++) {
             const char = line[i];
