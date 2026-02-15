@@ -9,10 +9,11 @@ languages = ["languages/basilisk/config.toml"]
 
 [language_servers.qcc-lsp]
 name = "qcc-lsp"
-language = "Basilisk C"
+languages = ["Basilisk C", "C"]
 
 [language_servers.qcc-lsp.language_ids]
 "Basilisk C" = "basilisk"
+"C" = "basilisk"
 
 [[capabilities]]
 kind = "npm:install"
