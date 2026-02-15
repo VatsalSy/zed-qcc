@@ -1,0 +1,4 @@
+source_repo = /Users/vatsal/1-github/1-LSPs/qcc-lsp
+source_commit = a7b0edd4751f302ec317213aad0b102c7eeecbbf
+source_subdir = server/out
+sync_script = /Users/vatsal/1-github/1-LSPs/zed-qcc/scripts/sync-qcc-lsp-server.sh
