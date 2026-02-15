@@ -163,7 +163,7 @@ impl zed::Extension for BasiliskExtension {
 
         Ok(zed::Command {
             command: node,
-            args: vec![server_script],
+            args: vec![server_script, "--stdio".to_string()],
             env: vec![],
         })
     }
