@@ -9,7 +9,6 @@ use zed_extension_api::{self as zed, LanguageServerId, Result};
 const SERVER_ID: &str = "qcc-lsp";
 const EXTENSION_ID: &str = "basilisk";
 const BUNDLED_SERVER_PATH: &str = "lsp/server.js";
-const CLI_SERVER_BINARY: &str = "qcc-lsp";
 const DEFAULT_CLANGD_MODE: &str = "proxy";
 
 const REQUIRED_NPM_PACKAGES: [(&str, &str); 3] = [
@@ -155,14 +154,6 @@ impl zed::Extension for BasiliskExtension {
         let settings = Self::get_lsp_settings(worktree);
         if let Some(binary) = settings.binary {
             return self.command_from_user_binary(binary, worktree);
-        }
-
-        if let Some(cli_path) = worktree.which(CLI_SERVER_BINARY) {
-            return Ok(zed::Command {
-                command: cli_path,
-                args: vec![],
-                env: vec![],
-            });
         }
 
         self.ensure_node_dependencies(language_server_id)?;
