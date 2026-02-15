@@ -2,7 +2,8 @@
 **/.DS_Store
 target/
 node_modules/
-basilisk/
+/basilisk/
+/grammars/
 CLAUDE.md
 client/node_modules/
 server/node_modules/
@@ -14,4 +15,3 @@ dist/
 .DS_Store
 **/.comphy-basilisk
 .project_config
-
