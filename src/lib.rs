@@ -7,6 +7,7 @@ use zed::settings::LspSettings;
 use zed_extension_api::{self as zed, LanguageServerId, Result};
 
 const SERVER_ID: &str = "qcc-lsp";
+const EXTENSION_ID: &str = "basilisk";
 const BUNDLED_SERVER_PATH: &str = "lsp/server.js";
 const DEFAULT_CLANGD_MODE: &str = "proxy";
 
@@ -73,22 +74,32 @@ impl BasiliskExtension {
     }
 
     fn bundled_server_path(&self, language_server_id: &LanguageServerId) -> Result<String> {
-        let current_dir = env::current_dir().map_err(|err| err.to_string())?;
-        let server_path = sanitize_windows_path(current_dir).join(BUNDLED_SERVER_PATH);
+        let current_dir = sanitize_windows_path(env::current_dir().map_err(|err| err.to_string())?);
 
-        if !fs::metadata(&server_path).is_ok_and(|meta| meta.is_file()) {
-            let message = format!(
-                "bundled qcc-lsp entrypoint not found at '{}'",
-                server_path.display()
-            );
-            zed::set_language_server_installation_status(
-                language_server_id,
-                &zed::LanguageServerInstallationStatus::Failed(message.clone()),
-            );
-            return Err(message);
+        let mut candidates = vec![current_dir.join(BUNDLED_SERVER_PATH)];
+        if let Some(installed_path) = installed_extension_server_path(&current_dir) {
+            candidates.push(installed_path);
         }
 
-        Ok(server_path.to_string_lossy().to_string())
+        for candidate in candidates.iter() {
+            if fs::metadata(candidate).is_ok_and(|meta| meta.is_file()) {
+                return Ok(candidate.to_string_lossy().to_string());
+            }
+        }
+
+        let searched_paths = candidates
+            .iter()
+            .map(|path| format!("'{}'", path.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let message = format!("bundled qcc-lsp entrypoint not found (searched {searched_paths})");
+
+        zed::set_language_server_installation_status(
+            language_server_id,
+            &zed::LanguageServerInstallationStatus::Failed(message.clone()),
+        );
+
+        Err(message)
     }
 
     fn resolve_user_binary_path(path: &str, worktree: &zed::Worktree) -> String {
@@ -240,6 +251,25 @@ fn sanitize_windows_path(path: PathBuf) -> PathBuf {
             .trim_start_matches('/')
             .into(),
     }
+}
+
+fn installed_extension_server_path(work_dir: &Path) -> Option<PathBuf> {
+    if work_dir.file_name()?.to_str()? != EXTENSION_ID {
+        return None;
+    }
+
+    let work_parent = work_dir.parent()?;
+    if work_parent.file_name()?.to_str()? != "work" {
+        return None;
+    }
+
+    let extensions_root = work_parent.parent()?;
+    Some(
+        extensions_root
+            .join("installed")
+            .join(EXTENSION_ID)
+            .join(BUNDLED_SERVER_PATH),
+    )
 }
 
 zed::register_extension!(BasiliskExtension);
