@@ -1,0 +1,1081 @@
+"use strict";
+/**
+ * Basilisk C Language Server
+ *
+ * A Language Server Protocol implementation for Basilisk C,
+ * providing diagnostics, code completion, hover information,
+ * go-to-definition, and more.
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+const node_1 = require("vscode-languageserver/node");
+const vscode_languageserver_textdocument_1 = require("vscode-languageserver-textdocument");
+const vscode_uri_1 = require("vscode-uri");
+const path = __importStar(require("path"));
+const basiliskLanguage_1 = require("./basiliskLanguage");
+const basiliskDocs_1 = require("./basiliskDocs");
+const diagnostics_1 = require("./diagnostics");
+const symbols_1 = require("./symbols");
+const clangdClient_1 = require("./clangdClient");
+const clangdConfig_1 = require("./clangdConfig");
+const basiliskDetect_1 = require("./basiliskDetect");
+const projectConfig_1 = require("./projectConfig");
+// Create connection and document manager
+const connection = (0, node_1.createConnection)(node_1.ProposedFeatures.all);
+const documents = new node_1.TextDocuments(vscode_languageserver_textdocument_1.TextDocument);
+// Symbol index for workspace navigation
+const symbolIndex = new symbols_1.SymbolIndex();
+// Settings
+let globalSettings = diagnostics_1.defaultSettings;
+const documentSettings = new Map();
+// Workspace info
+let workspaceRootUri = null;
+let workspaceFolders = null;
+// clangd integration
+let clangdClient = null;
+let clangdConfigKey = null;
+const clangdDiagnostics = new Map();
+const localDiagnostics = new Map();
+const clangdDiagnosticsGeneration = new Map();
+const localDiagnosticsVersion = new Map();
+// Initialize params cache
+let initializeParams = null;
+// Capability flags
+let hasConfigurationCapability = false;
+let hasWorkspaceFolderCapability = false;
+// Cached completion items
+let completionItems = null;
+const projectConfigWarnings = new Set();
+// Semantic token types and modifiers
+const tokenTypes = [
+    'keyword', // 0
+    'type', // 1
+    'function', // 2
+    'variable', // 3
+    'parameter', // 4
+    'property', // 5
+    'number', // 6
+    'string', // 7
+    'comment', // 8
+    'operator', // 9
+    'macro', // 10
+    'namespace', // 11
+    'event' // 12
+];
+const tokenModifiers = [
+    'declaration',
+    'definition',
+    'readonly',
+    'static',
+    'deprecated',
+    'modification',
+    'documentation'
+];
+const legend = {
+    tokenTypes,
+    tokenModifiers
+};
+/**
+ * Initialize the server
+ */
+connection.onInitialize((params) => {
+    initializeParams = params;
+    workspaceRootUri = params.rootUri ?? null;
+    workspaceFolders = params.workspaceFolders ?? null;
+    const capabilities = params.capabilities;
+    hasConfigurationCapability = !!(capabilities.workspace && !!capabilities.workspace.configuration);
+    hasWorkspaceFolderCapability = !!(capabilities.workspace && !!capabilities.workspace.workspaceFolders);
+    const initOptions = params.initializationOptions;
+    const initClangdMode = initOptions?.basilisk?.clangd?.mode;
+    const disableCoreProviders = initClangdMode === 'augment';
+    const result = {
+        capabilities: {
+            textDocumentSync: {
+                openClose: true,
+                change: node_1.TextDocumentSyncKind.Incremental,
+                save: { includeText: false }
+            },
+            // Completion
+            completionProvider: {
+                resolveProvider: true,
+                triggerCharacters: ['.', '#', '<', '"', '/']
+            },
+            // Hover
+            hoverProvider: true,
+            // Go to definition
+            definitionProvider: !disableCoreProviders,
+            // Find references
+            referencesProvider: !disableCoreProviders,
+            // Document symbols
+            documentSymbolProvider: !disableCoreProviders,
+            // Workspace symbols
+            workspaceSymbolProvider: !disableCoreProviders,
+            // Semantic tokens
+            semanticTokensProvider: disableCoreProviders
+                ? undefined
+                : {
+                    legend,
+                    full: true
+                }
+        }
+    };
+    if (hasWorkspaceFolderCapability) {
+        result.capabilities.workspace = {
+            workspaceFolders: {
+                supported: true
+            }
+        };
+    }
+    return result;
+});
+/**
+ * Server initialized
+ */
+connection.onInitialized(async () => {
+    if (hasConfigurationCapability) {
+        connection.client.register(node_1.DidChangeConfigurationNotification.type, undefined);
+    }
+    await refreshGlobalSettings();
+    await refreshBasiliskDocumentation(globalSettings);
+    const qccAvailable = await checkQccAndLog(globalSettings);
+    try {
+        await ensureClangd(globalSettings, qccAvailable);
+    }
+    catch (error) {
+        if (!qccAvailable) {
+            const message = `clangd error: ${error.message}`;
+            connection.console.error(message);
+            void connection.window.showErrorMessage(message);
+        }
+    }
+});
+/**
+ * Configuration change handler
+ */
+connection.onDidChangeConfiguration(async (change) => {
+    if (hasConfigurationCapability) {
+        documentSettings.clear();
+        await refreshGlobalSettings();
+    }
+    else {
+        const rootPath = getWorkspaceRootPath();
+        const base = applyProjectConfig(diagnostics_1.defaultSettings, rootPath);
+        const merged = mergeSettings(base, (change.settings?.basilisk || {}));
+        globalSettings = resolveQccIncludePaths(merged, rootPath);
+    }
+    await refreshBasiliskDocumentation(globalSettings);
+    const qccAvailable = await checkQccAndLog(globalSettings);
+    try {
+        await ensureClangd(globalSettings, qccAvailable);
+    }
+    catch (error) {
+        if (!qccAvailable) {
+            const message = `clangd error: ${error.message}`;
+            connection.console.error(message);
+            void connection.window.showErrorMessage(message);
+        }
+    }
+    // Revalidate all open documents
+    documents.all().forEach((document) => {
+        void validateTextDocument(document, 'open');
+    });
+});
+connection.onDidChangeWatchedFiles(async () => {
+    documentSettings.clear();
+    await refreshGlobalSettings();
+    const qccAvailable = await checkQccAndLog(globalSettings);
+    try {
+        await ensureClangd(globalSettings, qccAvailable);
+    }
+    catch (error) {
+        if (!qccAvailable) {
+            const message = `clangd error: ${error.message}`;
+            connection.console.error(message);
+            void connection.window.showErrorMessage(message);
+        }
+    }
+    documents.all().forEach((document) => {
+        void validateTextDocument(document, 'open');
+    });
+});
+/**
+ * Get document settings
+ */
+function getDocumentSettings(resource) {
+    if (!hasConfigurationCapability) {
+        return Promise.resolve(globalSettings);
+    }
+    let result = documentSettings.get(resource);
+    if (!result) {
+        result = connection.workspace.getConfiguration({
+            scopeUri: resource,
+            section: 'basilisk'
+        }).then((config) => {
+            const filePath = vscode_uri_1.URI.parse(resource).fsPath;
+            const base = applyProjectConfig(diagnostics_1.defaultSettings, path.dirname(filePath));
+            const merged = mergeSettings(base, config);
+            const rootPath = getWorkspaceRootPath() || path.dirname(filePath);
+            return resolveQccIncludePaths(merged, rootPath);
+        });
+        documentSettings.set(resource, result);
+    }
+    return result;
+}
+/**
+ * Document opened
+ */
+documents.onDidOpen(event => {
+    symbolIndex.indexDocument(event.document);
+    forwardDidOpen(event.document);
+    void validateTextDocument(event.document, 'open');
+});
+/**
+ * Document content changed
+ */
+documents.onDidChangeContent(change => {
+    symbolIndex.indexDocument(change.document);
+    forwardDidChange(change.document);
+    void validateTextDocument(change.document, 'change');
+});
+/**
+ * Document closed
+ */
+documents.onDidClose(event => {
+    documentSettings.delete(event.document.uri);
+    symbolIndex.removeDocument(event.document.uri);
+    localDiagnostics.delete(event.document.uri);
+    localDiagnosticsVersion.delete(event.document.uri);
+    clangdDiagnostics.delete(event.document.uri);
+    clangdDiagnosticsGeneration.delete(event.document.uri);
+    connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
+    forwardDidClose(event.document);
+});
+/**
+ * Document saved - run full diagnostics
+ */
+documents.onDidSave(async (event) => {
+    forwardDidSave(event.document);
+    void validateTextDocument(event.document, 'save');
+});
+async function validateTextDocument(document, trigger) {
+    const settings = await getDocumentSettings(document.uri);
+    if (trigger === 'change' && !settings.diagnosticsOnType) {
+        return;
+    }
+    if (trigger === 'save' && !settings.diagnosticsOnSave) {
+        return;
+    }
+    const version = document.version;
+    localDiagnosticsVersion.set(document.uri, version);
+    const diagnostics = await collectLocalDiagnostics(document, settings, trigger);
+    if (localDiagnosticsVersion.get(document.uri) !== version) {
+        return;
+    }
+    localDiagnostics.set(document.uri, diagnostics);
+    publishDiagnostics(document.uri, settings);
+}
+function mergeStringArrays(primary, secondary) {
+    if (!secondary || secondary.length === 0) {
+        return primary;
+    }
+    const seen = new Set();
+    const merged = [];
+    for (const entry of [...primary, ...secondary]) {
+        if (!entry || seen.has(entry)) {
+            continue;
+        }
+        seen.add(entry);
+        merged.push(entry);
+    }
+    return merged;
+}
+function mergeSettings(base, partial) {
+    const mergedQcc = {
+        ...base.qcc,
+        ...(partial.qcc || {})
+    };
+    mergedQcc.includePaths = mergeStringArrays(base.qcc?.includePaths ?? [], partial.qcc?.includePaths);
+    return {
+        ...base,
+        ...partial,
+        qcc: mergedQcc,
+        clangd: {
+            ...base.clangd,
+            ...(partial.clangd || {})
+        }
+    };
+}
+function projectConfigToSettings(config) {
+    const partial = {};
+    if (config.qccPath) {
+        partial.qccPath = config.qccPath;
+    }
+    if (config.basiliskPath) {
+        partial.basiliskPath = config.basiliskPath;
+    }
+    if (config.qcc?.includePaths) {
+        partial.qcc = { includePaths: config.qcc.includePaths };
+    }
+    if (config.clangd) {
+        partial.clangd = { ...config.clangd };
+    }
+    return partial;
+}
+function applyProjectConfig(base, startDir) {
+    if (!startDir) {
+        return base;
+    }
+    const result = (0, projectConfig_1.loadProjectConfig)(startDir);
+    if (result.error && result.path && !projectConfigWarnings.has(result.path)) {
+        projectConfigWarnings.add(result.path);
+        connection.console.warn(`Failed to parse ${result.path}: ${result.error}`);
+    }
+    if (!result.config) {
+        return base;
+    }
+    return mergeSettings(base, projectConfigToSettings(result.config));
+}
+function resolveQccIncludePaths(settings, baseDir) {
+    const includePaths = settings.qcc?.includePaths ?? [];
+    if (includePaths.length === 0) {
+        return settings;
+    }
+    const resolved = includePaths.map((entry) => (0, clangdConfig_1.resolvePathSetting)(entry, baseDir));
+    return {
+        ...settings,
+        qcc: {
+            ...settings.qcc,
+            includePaths: resolved
+        }
+    };
+}
+async function refreshGlobalSettings() {
+    if (!hasConfigurationCapability) {
+        return;
+    }
+    try {
+        const config = await connection.workspace.getConfiguration({ section: 'basilisk' });
+        const rootPath = getWorkspaceRootPath();
+        const base = applyProjectConfig(diagnostics_1.defaultSettings, rootPath);
+        const merged = mergeSettings(base, config);
+        globalSettings = resolveQccIncludePaths(merged, rootPath);
+    }
+    catch {
+        const rootPath = getWorkspaceRootPath();
+        const base = applyProjectConfig(diagnostics_1.defaultSettings, rootPath);
+        globalSettings = resolveQccIncludePaths(base, rootPath);
+    }
+}
+async function refreshBasiliskDocumentation(settings) {
+    const rootPath = getWorkspaceRootPath();
+    let basiliskRoot = (0, clangdConfig_1.resolveBasiliskRoot)(settings, rootPath);
+    if (!basiliskRoot && rootPath) {
+        basiliskRoot = path.join(rootPath, 'basilisk');
+    }
+    const docRoots = new Set();
+    if (basiliskRoot) {
+        docRoots.add(basiliskRoot);
+    }
+    if (rootPath) {
+        const srcLocalDir = (0, projectConfig_1.findSrcLocalDir)(rootPath);
+        if (srcLocalDir) {
+            docRoots.add(srcLocalDir);
+        }
+    }
+    const includePaths = settings.qcc?.includePaths ?? [];
+    for (const includePath of includePaths) {
+        if (shouldIndexIncludePath(includePath, rootPath, basiliskRoot)) {
+            docRoots.add(includePath);
+        }
+    }
+    try {
+        await (0, basiliskDocs_1.ensureBasiliskDocs)([...docRoots]);
+    }
+    catch (error) {
+        const message = `Basilisk docs indexing failed: ${error.message}`;
+        connection.console.warn(message);
+    }
+}
+function shouldIndexIncludePath(includePath, workspaceRoot, basiliskRoot) {
+    if (!includePath) {
+        return false;
+    }
+    if (path.basename(includePath) === 'src-local') {
+        return true;
+    }
+    if (workspaceRoot && isPathInside(includePath, workspaceRoot)) {
+        return true;
+    }
+    if (basiliskRoot && isPathInside(includePath, basiliskRoot)) {
+        return true;
+    }
+    return false;
+}
+function isPathInside(candidate, root) {
+    const relative = path.relative(root, candidate);
+    if (relative === '') {
+        return true;
+    }
+    return !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+async function checkQccAndLog(settings) {
+    const resolvedQccPath = (0, diagnostics_1.resolveQccPath)(settings);
+    const qccAvailable = resolvedQccPath ? await (0, diagnostics_1.checkQccAvailable)(resolvedQccPath) : false;
+    if (!settings.enableDiagnostics) {
+        return qccAvailable;
+    }
+    if (!qccAvailable) {
+        connection.console.warn(`qcc compiler not found at '${settings.qccPath}'. ` +
+            'Diagnostics will be limited. Set basilisk.qccPath in settings.');
+    }
+    else {
+        const label = resolvedQccPath || settings.qccPath;
+        connection.console.log(`Basilisk LSP server initialized with qcc support (${label})`);
+    }
+    return qccAvailable;
+}
+function getWorkspaceRootPath() {
+    if (workspaceRootUri) {
+        return vscode_uri_1.URI.parse(workspaceRootUri).fsPath;
+    }
+    if (workspaceFolders && workspaceFolders.length > 0) {
+        return vscode_uri_1.URI.parse(workspaceFolders[0].uri).fsPath;
+    }
+    return null;
+}
+function buildClangdConfigKey(settings, args, compileCommandsDir) {
+    return JSON.stringify({
+        path: settings.clangd.path,
+        args,
+        compileCommandsDir,
+        fallbackFlags: settings.clangd.fallbackFlags
+    });
+}
+async function ensureClangd(settings, qccAvailable) {
+    const clangdSettings = settings.clangd;
+    const mode = clangdSettings.mode;
+    const shouldEnable = clangdSettings.enabled &&
+        (mode === 'augment' || (mode === 'proxy' && !qccAvailable));
+    if (!shouldEnable) {
+        await stopClangd();
+        return;
+    }
+    if (!initializeParams) {
+        return;
+    }
+    const rootPath = getWorkspaceRootPath();
+    const basiliskRoot = (0, clangdConfig_1.resolveBasiliskRoot)(settings, rootPath);
+    const compileCommandsDir = (0, clangdConfig_1.resolvePathSetting)(clangdSettings.compileCommandsDir, rootPath) ||
+        (basiliskRoot ? basiliskRoot : '');
+    const args = [...clangdSettings.args];
+    if (compileCommandsDir) {
+        args.push(`--compile-commands-dir=${compileCommandsDir}`);
+    }
+    const derivedFallbackFlags = (0, clangdConfig_1.deriveBasiliskFallbackFlags)(basiliskRoot);
+    const fallbackFlags = (0, clangdConfig_1.mergeFlags)(clangdSettings.fallbackFlags, derivedFallbackFlags);
+    const nextKey = buildClangdConfigKey({
+        ...settings,
+        clangd: {
+            ...settings.clangd,
+            fallbackFlags
+        }
+    }, args, compileCommandsDir);
+    if (clangdClient && clangdConfigKey === nextKey && clangdClient.isReady()) {
+        return;
+    }
+    await stopClangd();
+    clangdClient = new clangdClient_1.ClangdClient({
+        path: clangdSettings.path,
+        args,
+        rootUri: workspaceRootUri,
+        workspaceFolders,
+        fallbackFlags
+    }, connection.console);
+    clangdClient.onDiagnostics((uri, diagnostics) => {
+        const normalized = diagnostics.map((diagnostic) => ({
+            ...diagnostic,
+            source: diagnostic.source || 'clangd'
+        }));
+        const generation = (clangdDiagnosticsGeneration.get(uri) ?? 0) + 1;
+        clangdDiagnosticsGeneration.set(uri, generation);
+        void (async () => {
+            const settings = await getDocumentSettings(uri);
+            if (clangdDiagnosticsGeneration.get(uri) !== generation) {
+                return;
+            }
+            let nextDiagnostics = [];
+            if (settings.clangd.diagnosticsMode === 'none') {
+                nextDiagnostics = [];
+            }
+            else if (settings.clangd.diagnosticsMode === 'filtered') {
+                const document = documents.get(uri);
+                nextDiagnostics = document
+                    ? (0, basiliskDetect_1.filterClangdDiagnostics)(normalized, document.getText())
+                    : normalized;
+            }
+            else {
+                nextDiagnostics = normalized;
+            }
+            clangdDiagnostics.set(uri, nextDiagnostics);
+            if (settings.diagnosticsOnType) {
+                publishDiagnostics(uri, settings);
+            }
+        })();
+    });
+    clangdClient.onLog((message) => {
+        connection.console.log(message.trim());
+    });
+    try {
+        await clangdClient.start(initializeParams);
+        clangdConfigKey = nextKey;
+        if (!clangdClient.isReady()) {
+            await stopClangd();
+            throw new Error('clangd failed to initialize');
+        }
+    }
+    catch (error) {
+        await stopClangd();
+        throw error;
+    }
+}
+async function stopClangd() {
+    if (clangdClient) {
+        await clangdClient.stop();
+    }
+    clangdClient = null;
+    clangdConfigKey = null;
+    clangdDiagnostics.clear();
+    clangdDiagnosticsGeneration.clear();
+}
+function shouldProxyToClangd(settings) {
+    const mode = settings.clangd.mode;
+    return (settings.clangd.enabled &&
+        (mode === 'proxy' || mode === 'augment') &&
+        clangdClient !== null &&
+        clangdClient.isReady());
+}
+async function collectLocalDiagnostics(document, settings, trigger) {
+    const diagnostics = [];
+    const runOnType = settings.diagnosticsOnType;
+    const runOnSave = settings.diagnosticsOnSave;
+    const runQuick = trigger === 'open' ||
+        (trigger === 'change' && runOnType) ||
+        (trigger === 'save' && runOnSave);
+    if (runQuick) {
+        diagnostics.push(...(0, diagnostics_1.quickValidate)(document.getText()));
+    }
+    const runQcc = settings.enableDiagnostics &&
+        ((trigger === 'change' && runOnType) ||
+            (trigger === 'save' && runOnSave) ||
+            (trigger === 'open' && runOnSave));
+    if (runQcc) {
+        try {
+            const compilerDiagnostics = await (0, diagnostics_1.runDiagnostics)(document.uri, document.getText(), settings, connection.console);
+            diagnostics.push(...compilerDiagnostics);
+        }
+        catch (error) {
+            const message = error?.message || String(error);
+            connection.console.warn(`qcc diagnostics failed: ${message}`);
+        }
+    }
+    return diagnostics;
+}
+function publishDiagnostics(uri, settings) {
+    const clangd = clangdDiagnostics.get(uri) || [];
+    const local = localDiagnostics.get(uri) || [];
+    const merged = dedupeDiagnostics([...clangd, ...local]);
+    const limited = merged.slice(0, settings.maxNumberOfProblems);
+    connection.sendDiagnostics({ uri, diagnostics: limited });
+}
+function dedupeDiagnostics(diagnostics) {
+    const seen = new Set();
+    const result = [];
+    for (const diagnostic of diagnostics) {
+        const key = [
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+            diagnostic.range.end.line,
+            diagnostic.range.end.character,
+            diagnostic.severity ?? '',
+            diagnostic.message,
+            diagnostic.source ?? ''
+        ].join(':');
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+        result.push(diagnostic);
+    }
+    return result;
+}
+function forwardDidOpen(document) {
+    if (!clangdClient) {
+        return;
+    }
+    clangdClient.notify('textDocument/didOpen', {
+        textDocument: {
+            uri: document.uri,
+            languageId: document.languageId,
+            version: document.version,
+            text: document.getText()
+        }
+    });
+}
+function forwardDidChange(document) {
+    if (!clangdClient) {
+        return;
+    }
+    clangdClient.notify('textDocument/didChange', {
+        textDocument: {
+            uri: document.uri,
+            version: document.version
+        },
+        contentChanges: [
+            {
+                text: document.getText()
+            }
+        ]
+    });
+}
+function forwardDidClose(document) {
+    if (!clangdClient) {
+        return;
+    }
+    clangdClient.notify('textDocument/didClose', {
+        textDocument: { uri: document.uri }
+    });
+}
+function forwardDidSave(document) {
+    if (!clangdClient) {
+        return;
+    }
+    clangdClient.notify('textDocument/didSave', {
+        textDocument: { uri: document.uri }
+    });
+}
+function getBasiliskCompletionItems(document, params) {
+    if (!completionItems) {
+        completionItems = (0, basiliskLanguage_1.createCompletionItems)();
+    }
+    if (!document) {
+        return completionItems;
+    }
+    const text = document.getText();
+    const offset = document.offsetAt(params.position);
+    const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
+    const lineText = text.slice(lineStart, offset);
+    if (/#include\s*["<]/.test(lineText)) {
+        return completionItems.filter(item => item.label.endsWith('.h') || item.label.includes('/'));
+    }
+    if (/\w+\.$/.test(lineText)) {
+        return [
+            { label: 'x', kind: 5, detail: 'X component' },
+            { label: 'y', kind: 5, detail: 'Y component' },
+            { label: 'z', kind: 5, detail: 'Z component (3D)' }
+        ];
+    }
+    return completionItems;
+}
+function normalizeCompletionResult(result) {
+    if (!result) {
+        return { isIncomplete: false, items: [] };
+    }
+    if (Array.isArray(result)) {
+        return { isIncomplete: false, items: result };
+    }
+    return result;
+}
+function tagCompletionItems(items, source) {
+    return items.map((item) => {
+        const tagged = { ...item };
+        if (tagged.data && typeof tagged.data === 'object' && !Array.isArray(tagged.data)) {
+            tagged.data = {
+                ...tagged.data,
+                _basiliskSource: source
+            };
+        }
+        else {
+            tagged._basiliskSource = source;
+        }
+        return tagged;
+    });
+}
+function isClangdCompletionItem(item) {
+    const data = item.data;
+    if (data && data._basiliskSource === 'clangd') {
+        return true;
+    }
+    const tagged = item;
+    return tagged._basiliskSource === 'clangd';
+}
+function mergeCompletionResults(clangdResult, basiliskItems) {
+    const clangdList = normalizeCompletionResult(clangdResult);
+    const taggedClangd = tagCompletionItems(clangdList.items, 'clangd');
+    const taggedBasilisk = tagCompletionItems(basiliskItems, 'basilisk');
+    const seen = new Set();
+    const merged = [];
+    const pushItem = (item) => {
+        const key = item.label;
+        if (seen.has(key)) {
+            return;
+        }
+        seen.add(key);
+        merged.push(item);
+    };
+    taggedClangd.forEach(pushItem);
+    taggedBasilisk.forEach(pushItem);
+    return {
+        isIncomplete: clangdList.isIncomplete ?? false,
+        items: merged
+    };
+}
+function buildBasiliskHover(document, params) {
+    const symbolInfo = (0, symbols_1.findSymbolAtPosition)(document, params.position);
+    if (!symbolInfo) {
+        return null;
+    }
+    const { word } = symbolInfo;
+    const doc = (0, basiliskLanguage_1.getHoverDocumentation)(word) ?? (0, basiliskDocs_1.getBasiliskDoc)(word)?.markdown;
+    if (doc) {
+        return {
+            contents: {
+                kind: 'markdown',
+                value: doc
+            }
+        };
+    }
+    if ((0, basiliskLanguage_1.isBasiliskKeyword)(word)) {
+        const category = (0, basiliskLanguage_1.getKeywordCategory)(word);
+        return {
+            contents: {
+                kind: 'markdown',
+                value: `**${word}** (Basilisk ${category})`
+            }
+        };
+    }
+    const symbol = symbolIndex.findDefinition(word);
+    if (symbol) {
+        const sections = [];
+        if (symbol.documentation) {
+            sections.push(symbol.documentation.trim());
+        }
+        if (symbol.detail) {
+            sections.push(`\`\`\`c\n${symbol.detail}\n\`\`\``);
+        }
+        if (sections.length === 0) {
+            sections.push(`**${symbol.name}**`);
+        }
+        return {
+            contents: {
+                kind: 'markdown',
+                value: sections.join('\n\n')
+            }
+        };
+    }
+    return null;
+}
+function mergeHovers(primary, secondary) {
+    if (!primary && !secondary) {
+        return null;
+    }
+    if (primary && !secondary) {
+        return primary;
+    }
+    if (!primary && secondary) {
+        return secondary;
+    }
+    const primaryContents = primary?.contents;
+    const secondaryContents = secondary?.contents;
+    const combined = {
+        contents: []
+    };
+    const pushContent = (content) => {
+        if (!content) {
+            return;
+        }
+        if (Array.isArray(content)) {
+            combined.contents.push(...content);
+            return;
+        }
+        combined.contents.push(content);
+    };
+    pushContent(primaryContents);
+    if (secondaryContents) {
+        const separator = { kind: node_1.MarkupKind.Markdown, value: '\n---\n' };
+        pushContent(separator);
+        pushContent(secondaryContents);
+    }
+    if (primary?.range) {
+        combined.range = primary.range;
+    }
+    return combined;
+}
+/**
+ * Completion handler
+ */
+connection.onCompletion(async (params) => {
+    const document = documents.get(params.textDocument.uri);
+    const basiliskItems = getBasiliskCompletionItems(document, params);
+    const settings = await getDocumentSettings(params.textDocument.uri);
+    if (!shouldProxyToClangd(settings)) {
+        return basiliskItems;
+    }
+    try {
+        const clangdResult = await clangdClient?.request('textDocument/completion', params);
+        return mergeCompletionResults(clangdResult, basiliskItems);
+    }
+    catch {
+        return basiliskItems;
+    }
+});
+/**
+ * Completion item resolution
+ */
+connection.onCompletionResolve(async (item) => {
+    let resolved = item;
+    if (isClangdCompletionItem(item) && clangdClient?.isReady()) {
+        try {
+            const clangdResolved = await clangdClient.request('completionItem/resolve', item);
+            if (clangdResolved) {
+                resolved = clangdResolved;
+            }
+        }
+        catch {
+            // Fall back to existing item.
+        }
+    }
+    const doc = (0, basiliskLanguage_1.getHoverDocumentation)(resolved.label) ?? (0, basiliskDocs_1.getBasiliskDoc)(resolved.label)?.markdown;
+    if (doc && !resolved.documentation) {
+        resolved.documentation = {
+            kind: 'markdown',
+            value: doc
+        };
+    }
+    return resolved;
+});
+/**
+ * Hover handler
+ */
+connection.onHover(async (params) => {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) {
+        return null;
+    }
+    const settings = await getDocumentSettings(params.textDocument.uri);
+    const basiliskHover = buildBasiliskHover(document, params);
+    let clangdHover = null;
+    if (shouldProxyToClangd(settings)) {
+        try {
+            const result = await clangdClient?.request('textDocument/hover', params);
+            clangdHover = result || null;
+        }
+        catch {
+            clangdHover = null;
+        }
+    }
+    return mergeHovers(clangdHover, basiliskHover);
+});
+/**
+ * Go to definition handler
+ */
+connection.onDefinition(async (params) => {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) {
+        return null;
+    }
+    const settings = await getDocumentSettings(params.textDocument.uri);
+    if (shouldProxyToClangd(settings)) {
+        try {
+            const result = await clangdClient?.request('textDocument/definition', params);
+            if (result) {
+                return result;
+            }
+        }
+        catch {
+            // Fall back to Basilisk symbols.
+        }
+    }
+    const symbolInfo = (0, symbols_1.findSymbolAtPosition)(document, params.position);
+    if (!symbolInfo) {
+        return null;
+    }
+    const { word } = symbolInfo;
+    // Find in symbol index
+    const symbol = symbolIndex.findDefinition(word);
+    if (symbol) {
+        return symbol.location;
+    }
+    // TODO: Search Basilisk headers for builtin definitions
+    return null;
+});
+/**
+ * Find references handler
+ */
+connection.onReferences(async (params) => {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) {
+        return [];
+    }
+    const settings = await getDocumentSettings(params.textDocument.uri);
+    if (shouldProxyToClangd(settings)) {
+        try {
+            const result = await clangdClient?.request('textDocument/references', params);
+            if (Array.isArray(result)) {
+                return result;
+            }
+        }
+        catch {
+            // Fall back to Basilisk references.
+        }
+    }
+    const symbolInfo = (0, symbols_1.findSymbolAtPosition)(document, params.position);
+    if (!symbolInfo) {
+        return [];
+    }
+    const { word } = symbolInfo;
+    const references = (0, symbols_1.findReferences)(document, word);
+    return references.map(range => ({
+        uri: params.textDocument.uri,
+        range
+    }));
+});
+/**
+ * Document symbols handler
+ */
+connection.onDocumentSymbol(async (params) => {
+    const settings = await getDocumentSettings(params.textDocument.uri);
+    if (shouldProxyToClangd(settings)) {
+        try {
+            const result = await clangdClient?.request('textDocument/documentSymbol', params);
+            if (Array.isArray(result)) {
+                return result;
+            }
+        }
+        catch {
+            // Fall back to Basilisk symbols.
+        }
+    }
+    return symbolIndex.getDocumentSymbols(params.textDocument.uri);
+});
+/**
+ * Workspace symbols handler
+ */
+connection.onWorkspaceSymbol(async (params) => {
+    const settings = globalSettings;
+    if (shouldProxyToClangd(settings)) {
+        try {
+            const result = await clangdClient?.request('workspace/symbol', params);
+            if (Array.isArray(result)) {
+                return result;
+            }
+        }
+        catch {
+            // Fall back to Basilisk symbols.
+        }
+    }
+    const symbols = symbolIndex.findSymbols(params.query);
+    return symbols.map(s => ({
+        name: s.name,
+        kind: s.kind,
+        location: s.location,
+        containerName: s.containerName
+    }));
+});
+/**
+ * Semantic tokens handler
+ */
+connection.languages.semanticTokens.on((params) => {
+    const document = documents.get(params.textDocument.uri);
+    if (!document) {
+        return { data: [] };
+    }
+    const builder = new node_1.SemanticTokensBuilder();
+    const text = document.getText();
+    const lines = text.split('\n');
+    for (let lineNum = 0; lineNum < lines.length; lineNum++) {
+        const line = lines[lineNum];
+        // Skip empty lines
+        if (!line.trim()) {
+            continue;
+        }
+        // Find tokens in line
+        let match;
+        // Match keywords
+        const keywordRegex = /\b(foreach|foreach_face|foreach_vertex|foreach_boundary|foreach_dimension|foreach_neighbor|foreach_level|foreach_leaf|foreach_cell|foreach_child|foreach_block|event|reduction)\b/g;
+        while ((match = keywordRegex.exec(line)) !== null) {
+            builder.push(lineNum, match.index, match[0].length, 0, 0); // keyword
+        }
+        // Match types
+        const typeRegex = /\b(scalar|vector|tensor|face|vertex|coord|point|symmetric)\b/g;
+        while ((match = typeRegex.exec(line)) !== null) {
+            builder.push(lineNum, match.index, match[0].length, 1, 0); // type
+        }
+        // Match functions (basic heuristic: word followed by opening paren)
+        const funcRegex = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s*\(/g;
+        while ((match = funcRegex.exec(line)) !== null) {
+            const funcName = match[1];
+            if (basiliskLanguage_1.BUILTIN_FUNCTIONS.includes(funcName)) {
+                builder.push(lineNum, match.index, funcName.length, 2, 0); // function
+            }
+        }
+        // Match constants
+        const constantRegex = /\b(PI|M_PI|HUGE|nodata|true|false|NULL|N|L0|X0|Y0|Z0|DT|TOLERANCE)\b/g;
+        while ((match = constantRegex.exec(line)) !== null) {
+            builder.push(lineNum, match.index, match[0].length, 3, 2); // variable + readonly
+        }
+        // Match loop variables (when inside foreach)
+        const loopVarRegex = /\b(Delta|level|depth|point|child|neighbor|left|right|top|bottom|front|back)\b/g;
+        while ((match = loopVarRegex.exec(line)) !== null) {
+            builder.push(lineNum, match.index, match[0].length, 4, 0); // parameter
+        }
+        // Match MPI keywords
+        const mpiRegex = /\b(MPI_\w+|mpi_\w+|pid|npe)\b/g;
+        while ((match = mpiRegex.exec(line)) !== null) {
+            builder.push(lineNum, match.index, match[0].length, 11, 0); // namespace
+        }
+        // Match preprocessor
+        const preRegex = /^\s*(#\w+)/;
+        match = preRegex.exec(line);
+        if (match) {
+            builder.push(lineNum, match.index + line.indexOf(match[1]), match[1].length, 10, 0); // macro
+        }
+    }
+    return builder.build();
+});
+// Start listening
+documents.listen(connection);
+connection.listen();
+connection.console.log('Basilisk C Language Server started');
+//# sourceMappingURL=server.js.map

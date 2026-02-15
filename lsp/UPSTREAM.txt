@@ -1,0 +1,4 @@
+source_repo = unknown
+source_commit = a7b0edd4751f302ec317213aad0b102c7eeecbbf
+source_subdir = server/out
+sync_script = scripts/sync-qcc-lsp-server.sh

@@ -2,7 +2,9 @@
 **/.DS_Store
 target/
 node_modules/
-basilisk/
+/basilisk/
+/grammars/
+/extension.wasm
 CLAUDE.md
 client/node_modules/
 server/node_modules/
@@ -11,6 +13,5 @@ server/out/
 out/
 dist/
 *.tsbuildinfo
-.DS_Store
 **/.comphy-basilisk
-
+.project_config
