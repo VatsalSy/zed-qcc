@@ -65,7 +65,7 @@ function resolveExecutableOnPath(command) {
     const isWindows = process.platform === 'win32';
     const expanded = expandTilde(command);
     if (path.isAbsolute(expanded)) {
-        if (!fs.existsSync(expanded)) {
+        if (!fs.existsSync(expanded) || !fs.statSync(expanded).isFile()) {
             return null;
         }
         if (isWindows) {
