@@ -1,6 +1,6 @@
 [package]
 name = "zed-qcc"
-version = "0.2.6"
+version = "0.3.0"
 edition = "2021"
 authors = ["Zed Basilisk Contributors"]
 description = "Basilisk C language support for Zed"

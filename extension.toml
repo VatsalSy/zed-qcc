@@ -1,6 +1,6 @@
 id = "zed-qcc"
 name = "zed-qcc"
-version = "0.2.6"
+version = "0.3.0"
 schema_version = 1
 authors = ["Zed Basilisk Contributors"]
 description = "Basilisk C language support powered by qcc-lsp"
