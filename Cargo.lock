@@ -750,8 +750,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed-basilisk"
-version = "0.2.0"
+name = "zed-qcc"
+version = "0.2.6"
 dependencies = [
  "zed_extension_api",
 ]

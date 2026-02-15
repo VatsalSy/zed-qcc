@@ -1,0 +1,4 @@
+interface:
+  display_name: "Zed QCC Release"
+  short_description: "Validate branch and publish tagged Zed release"
+  default_prompt: "Use $zed-qcc-release to validate repo state, tag, push, and publish GitHub release notes."

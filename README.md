@@ -50,8 +50,8 @@ Open Zed command palette and install dev extension from this repository path:
 For dev installs, copy bundled server JS files into Zed extension work directory:
 
 ```bash
-mkdir -p "/Users/vatsal/Library/Application Support/Zed/extensions/work/basilisk/lsp"
-rsync -a --delete lsp/ "/Users/vatsal/Library/Application Support/Zed/extensions/work/basilisk/lsp/"
+mkdir -p "/Users/vatsal/Library/Application Support/Zed/extensions/work/zed-qcc/lsp"
+rsync -a --delete lsp/ "/Users/vatsal/Library/Application Support/Zed/extensions/work/zed-qcc/lsp/"
 ```
 
 ### 3. Configure Zed settings (`~/.config/zed/settings.json`)
@@ -65,7 +65,7 @@ Use Node + bundled server entrypoint:
       "binary": {
         "path": "/Users/vatsal/.nvm/versions/node/v22.16.0/bin/node",
         "arguments": [
-          "/Users/vatsal/Library/Application Support/Zed/extensions/work/basilisk/lsp/server.js",
+          "/Users/vatsal/Library/Application Support/Zed/extensions/work/zed-qcc/lsp/server.js",
           "--stdio"
         ]
       },
@@ -100,7 +100,7 @@ The extension associates `.c` and `.h` with `Basilisk C` in extension metadata.
 - Basilisk headers unresolved:
   - Set `lsp.qcc-lsp.settings.basiliskPath` and/or `qcc.includePaths`.
 - `bundled qcc-lsp entrypoint not found`:
-  - Re-sync `lsp/` into `/Users/vatsal/Library/Application Support/Zed/extensions/work/basilisk/lsp/`.
+  - Re-sync `lsp/` into `/Users/vatsal/Library/Application Support/Zed/extensions/work/zed-qcc/lsp/`.
 - `Connection input stream is not set`:
   - Ensure server launch includes `--stdio`.
 - `Unknown command: --stdio`:

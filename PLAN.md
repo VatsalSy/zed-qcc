@@ -104,8 +104,8 @@ TOLERANCE = 1e-4 [*];
 
 #### extension.toml
 ```toml
-id = "basilisk"
-name = "Basilisk C"
+id = "zed-qcc"
+name = "zed-qcc"
 version = "0.1.0"
 schema_version = 1
 authors = ["Your Name <email@example.com>"]
@@ -130,7 +130,7 @@ commit = "latest-commit-hash"
 #### Cargo.toml
 ```toml
 [package]
-name = "zed-basilisk"
+name = "zed-qcc"
 version = "0.1.0"
 edition = "2021"
 
