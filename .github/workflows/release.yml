@@ -13,7 +13,7 @@ jobs:
       - name: Publish Tag To Zed Extensions
         uses: huacnlee/zed-extension-action@v2.0.0
         with:
-          extension-name: zed-qcc
+          extension-name: basilisk-qcc
           push-to: VatsalSy/extensions
         env:
           COMMITTER_TOKEN: ${{ secrets.COMMITTER_TOKEN }}

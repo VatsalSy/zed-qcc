@@ -1,5 +1,5 @@
-id = "zed-qcc"
-name = "zed-qcc"
+id = "basilisk-qcc"
+name = "basilisk-qcc"
 version = "0.3.0"
 schema_version = 1
 authors = ["Zed Basilisk Contributors"]

@@ -7,7 +7,7 @@ use zed::settings::LspSettings;
 use zed_extension_api::{self as zed, LanguageServerId, Result};
 
 const SERVER_ID: &str = "qcc-lsp";
-const EXTENSION_ID: &str = "zed-qcc";
+const EXTENSION_ID: &str = "basilisk-qcc";
 const BUNDLED_SERVER_PATH: &str = "lsp/server.js";
 const DEFAULT_CLANGD_MODE: &str = "proxy";
 
@@ -17,11 +17,11 @@ const REQUIRED_NPM_PACKAGES: [(&str, &str); 3] = [
     ("vscode-uri", "3.1.0"),
 ];
 
-struct ZedQccExtension {
+struct BasiliskQccExtension {
     dependencies_ready: bool,
 }
 
-impl ZedQccExtension {
+impl BasiliskQccExtension {
     fn new() -> Self {
         Self {
             dependencies_ready: false,
@@ -147,9 +147,9 @@ impl ZedQccExtension {
     }
 }
 
-impl zed::Extension for ZedQccExtension {
+impl zed::Extension for BasiliskQccExtension {
     fn new() -> Self {
-        ZedQccExtension::new()
+        BasiliskQccExtension::new()
     }
 
     fn language_server_command(
@@ -294,7 +294,7 @@ fn installed_extension_server_path(work_dir: &Path) -> Option<PathBuf> {
     )
 }
 
-zed::register_extension!(ZedQccExtension);
+zed::register_extension!(BasiliskQccExtension);
 
 #[cfg(test)]
 mod tests {

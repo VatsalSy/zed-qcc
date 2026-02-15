@@ -30,7 +30,7 @@ This document outlines a comprehensive plan to create a Zed editor extension for
 ### 1. Project Structure
 
 ```
-zed-qcc/
+basilisk-qcc/
 ├── Cargo.toml
 ├── extension.toml
 ├── src/
@@ -104,13 +104,13 @@ TOLERANCE = 1e-4 [*];
 
 #### extension.toml
 ```toml
-id = "zed-qcc"
-name = "zed-qcc"
+id = "basilisk-qcc"
+name = "basilisk-qcc"
 version = "0.1.0"
 schema_version = 1
 authors = ["Your Name <email@example.com>"]
 description = "Basilisk C language support with qcc compiler integration"
-repository = "https://github.com/yourusername/zed-qcc"
+repository = "https://github.com/yourusername/basilisk-qcc"
 
 [language_servers.basilisk-lsp]
 name = "Basilisk Language Server"
@@ -130,7 +130,7 @@ commit = "latest-commit-hash"
 #### Cargo.toml
 ```toml
 [package]
-name = "zed-qcc"
+name = "basilisk-qcc"
 version = "0.1.0"
 edition = "2021"
 

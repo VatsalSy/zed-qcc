@@ -1,0 +1,4 @@
+interface:
+  display_name: "Basilisk QCC Release"
+  short_description: "Validate branch and publish tagged Zed release"
+  default_prompt: "Use $basilisk-qcc-release to validate repo state, tag, push, and publish GitHub release notes."

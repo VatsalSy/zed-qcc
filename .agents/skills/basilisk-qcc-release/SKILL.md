@@ -1,9 +1,9 @@
 ---
-name: zed-qcc-release
-description: Release automation for the zed-qcc extension. Use when you need to cut a versioned release tag and publish GitHub release notes for this repository, with strict preflight checks for master branch, clean worktree, upstream sync, and extension version/tag alignment.
+name: basilisk-qcc-release
+description: Release automation for the basilisk-qcc extension. Use when you need to cut a versioned release tag and publish GitHub release notes for this repository, with strict preflight checks for master branch, clean worktree, upstream sync, and extension version/tag alignment.
 ---
 
-# zed-qcc-release
+# basilisk-qcc-release
 
 ## Workflow
 
@@ -15,19 +15,19 @@ description: Release automation for the zed-qcc extension. Use when you need to 
 ## Command
 
 ```bash
-.agents/skills/zed-qcc-release/scripts/release-zed-extension.sh --tag vX.Y.Z
+.agents/skills/basilisk-qcc-release/scripts/release-zed-extension.sh --tag vX.Y.Z
 ```
 
 Dry-run mode:
 
 ```bash
-.agents/skills/zed-qcc-release/scripts/release-zed-extension.sh --tag vX.Y.Z --dry-run
+.agents/skills/basilisk-qcc-release/scripts/release-zed-extension.sh --tag vX.Y.Z --dry-run
 ```
 
 Version bump mode:
 
 ```bash
-.agents/skills/zed-qcc-release/scripts/release-zed-extension.sh --tag vX.Y.Z --bump-version
+.agents/skills/basilisk-qcc-release/scripts/release-zed-extension.sh --tag vX.Y.Z --bump-version
 ```
 
 ## Preflight Checks Enforced By Script
@@ -43,6 +43,6 @@ Version bump mode:
 
 ## Notes
 
-- Use this skill for the `zed-qcc` repository only.
+- Use this skill for the `basilisk-qcc` extension repository only.
 - The script intentionally fails fast; do not auto-fix by changing branch history.
 - `--bump-version` updates all three version files and exits; release is a second explicit step.

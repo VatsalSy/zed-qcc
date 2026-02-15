@@ -56,12 +56,27 @@ read_version_from_toml() {
   awk -F '"' '/^version = "/ { print $2; exit }' "$file"
 }
 
+read_package_name_from_cargo_toml() {
+  awk -F '"' '
+    BEGIN { in_pkg = 0 }
+    /^\[package\]$/ { in_pkg = 1; next }
+    /^\[/ { if (in_pkg) exit }
+    in_pkg && /^name = "/ { print $2; exit }
+  ' Cargo.toml
+}
+
 read_version_from_cargo_lock() {
-  awk '
+  local package_name="$1"
+  awk -v package_name="$package_name" '
     BEGIN { in_pkg = 0; found = 0 }
     /^\[\[package\]\]$/ { in_pkg = 1; pkg = ""; next }
-    in_pkg && /^name = "zed-qcc"$/ { pkg = "zed-qcc"; next }
-    in_pkg && pkg == "zed-qcc" && /^version = "/ {
+    in_pkg && /^name = "/ {
+      if ($0 == "name = \"" package_name "\"") {
+        pkg = package_name
+      }
+      next
+    }
+    in_pkg && pkg == package_name && /^version = "/ {
       gsub(/^version = "/, "");
       gsub(/"$/, "");
       print;
@@ -102,15 +117,22 @@ write_version_to_toml() {
 }
 
 write_version_to_cargo_lock() {
-  local version="$1"
+  local package_name="$1"
+  local version="$2"
   local tmp
   tmp="$(mktemp)"
 
-  awk -v version="$version" '
+  awk -v package_name="$package_name" -v version="$version" '
     BEGIN { in_pkg = 0; pkg = ""; updated = 0 }
     /^\[\[package\]\]$/ { in_pkg = 1; pkg = ""; print; next }
-    in_pkg && /^name = "zed-qcc"$/ { pkg = "zed-qcc"; print; next }
-    in_pkg && pkg == "zed-qcc" && /^version = "/ && updated == 0 {
+    in_pkg && /^name = "/ {
+      if ($0 == "name = \"" package_name "\"") {
+        pkg = package_name
+      }
+      print
+      next
+    }
+    in_pkg && pkg == package_name && /^version = "/ && updated == 0 {
       print "version = \"" version "\""
       updated = 1
       pkg = ""
@@ -120,7 +142,7 @@ write_version_to_cargo_lock() {
     END { if (!updated) exit 2 }
   ' Cargo.lock >"$tmp" || {
     rm -f "$tmp"
-    fail "failed to update zed-qcc version in Cargo.lock"
+    fail "failed to update package '$package_name' version in Cargo.lock"
   }
 
   mv "$tmp" Cargo.lock
@@ -180,6 +202,9 @@ git rev-parse --git-dir >/dev/null 2>&1 || fail "current directory is not a git 
 [[ -f Cargo.toml ]] || fail "Cargo.toml not found in repo root"
 [[ -f Cargo.lock ]] || fail "Cargo.lock not found in repo root"
 
+cargo_package_name="$(read_package_name_from_cargo_toml)"
+[[ -n "$cargo_package_name" ]] || fail "could not read package name from Cargo.toml"
+
 current_branch="$(git branch --show-current)"
 [[ "$current_branch" == "master" ]] || fail "current branch is '$current_branch'; expected 'master'"
 
@@ -189,12 +214,12 @@ if [[ "$BUMP_VERSION" == "1" ]]; then
   if [[ "$DRY_RUN" == "1" ]]; then
     print_cmd write_version_to_toml extension.toml "$RELEASE_VERSION"
     print_cmd write_version_to_toml Cargo.toml "$RELEASE_VERSION"
-    print_cmd write_version_to_cargo_lock "$RELEASE_VERSION"
+    print_cmd write_version_to_cargo_lock "$cargo_package_name" "$RELEASE_VERSION"
     print_cmd cargo check
   else
     write_version_to_toml extension.toml "$RELEASE_VERSION"
     write_version_to_toml Cargo.toml "$RELEASE_VERSION"
-    write_version_to_cargo_lock "$RELEASE_VERSION"
+    write_version_to_cargo_lock "$cargo_package_name" "$RELEASE_VERSION"
     cargo check >/dev/null
   fi
 
@@ -219,7 +244,7 @@ extension_version="$(read_version_from_toml extension.toml)"
 cargo_version="$(read_version_from_toml Cargo.toml)"
 [[ -n "$cargo_version" ]] || fail "could not read version from Cargo.toml"
 
-cargo_lock_version="$(read_version_from_cargo_lock)" || fail "could not read zed-qcc version from Cargo.lock"
+cargo_lock_version="$(read_version_from_cargo_lock "$cargo_package_name")" || fail "could not read package '$cargo_package_name' version from Cargo.lock"
 
 [[ "$extension_version" == "$cargo_version" ]] || {
   fail "version mismatch: extension.toml=$extension_version Cargo.toml=$cargo_version (run with --bump-version)"
