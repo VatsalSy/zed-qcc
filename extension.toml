@@ -1,9 +1,9 @@
 id = "basilisk"
 name = "Basilisk C"
-version = "0.1.0"
+version = "0.2.0"
 schema_version = 1
 authors = ["Zed Basilisk Contributors"]
-description = "Basilisk C language support with qcc-powered clangd integration"
+description = "Basilisk C language support powered by qcc-lsp"
 repository = "https://github.com/VatsalSy/zed-qcc"
 
 [grammars.basilisk]
@@ -19,8 +19,21 @@ comment_token = "//"
 auto_indent = true
 word_characters = ["_"]
 
-[language_servers.basilisk]
-name = "Basilisk Language Server"
+[language_servers.qcc-lsp]
+name = "qcc-lsp"
 language = "Basilisk C"
-command = "clangd"
-args = ["--background-index", "--clang-tidy=false"]
+
+[language_servers.qcc-lsp.language_ids]
+"Basilisk C" = "basilisk"
+
+[[capabilities]]
+kind = "npm:install"
+package = "vscode-languageserver"
+
+[[capabilities]]
+kind = "npm:install"
+package = "vscode-languageserver-textdocument"
+
+[[capabilities]]
+kind = "npm:install"
+package = "vscode-uri"

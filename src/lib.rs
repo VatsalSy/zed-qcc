@@ -1,270 +1,132 @@
-use std::collections::HashSet;
+use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use serde::Serialize;
-use walkdir::{DirEntry, WalkDir};
-use zed_extension_api as zed;
+use zed::serde_json::{json, Value};
+use zed::settings::LspSettings;
+use zed_extension_api::{self as zed, LanguageServerId, Result};
+
+const SERVER_ID: &str = "qcc-lsp";
+const BUNDLED_SERVER_PATH: &str = "lsp/server.js";
+const DEFAULT_CLANGD_MODE: &str = "proxy";
+
+const REQUIRED_NPM_PACKAGES: [(&str, &str); 3] = [
+    ("vscode-languageserver", "9.0.1"),
+    ("vscode-languageserver-textdocument", "1.0.12"),
+    ("vscode-uri", "3.1.0"),
+];
 
 struct BasiliskExtension {
-    clangd_path: Option<String>,
-    qcc_path: Option<PathBuf>,
-    basilisk_root: Option<PathBuf>,
-    exclude_dirs: HashSet<String>,
+    dependencies_ready: bool,
 }
 
 impl BasiliskExtension {
     fn new() -> Self {
         Self {
-            clangd_path: None,
-            qcc_path: None,
-            basilisk_root: None,
-            exclude_dirs: Self::load_exclude_dirs(),
+            dependencies_ready: false,
         }
     }
 
-    fn load_exclude_dirs() -> HashSet<String> {
-        let mut excludes = vec![
-            "target", "build", ".git", "node_modules", "dist", "out", "coverage", "bin",
-            "obj", ".vscode", ".idea", "CMakeFiles", "__pycache__", ".cache",
-        ]
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect::<HashSet<_>>();
-
-        // Load additional excludes from environment variable if set
-        if let Ok(env_excludes) = std::env::var("QCC_EXCLUDE_DIRS") {
-            for dir in env_excludes.split(',') {
-                excludes.insert(dir.trim().to_string());
-            }
+    fn ensure_node_dependencies(&mut self, language_server_id: &LanguageServerId) -> Result<()> {
+        if self.dependencies_ready {
+            return Ok(());
         }
 
-        excludes
-    }
+        zed::set_language_server_installation_status(
+            language_server_id,
+            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
+        );
 
-    fn normalize_basilisk_root(path: PathBuf) -> Option<PathBuf> {
-        if path.join("Makefile.defs").is_file() {
-            return Some(path);
-        }
-
-        let src_candidate = path.join("src");
-        if src_candidate.join("Makefile.defs").is_file() {
-            return Some(src_candidate);
-        }
-
-        None
-    }
-
-    fn detect_environment(&mut self, worktree: &zed::Worktree) -> Result<()> {
-        if self.clangd_path.is_none() {
-            if let Some(path) = worktree.which("clangd") {
-                self.clangd_path = Some(path);
-            }
-        }
-
-        if self.qcc_path.is_none() {
-            self.qcc_path = Self::find_qcc(worktree);
-        }
-
-        if self.basilisk_root.is_none() {
-            self.basilisk_root = Self::detect_basilisk_root(worktree);
-        }
-
-        Ok(())
-    }
-
-    fn find_qcc(worktree: &zed::Worktree) -> Option<PathBuf> {
-        if let Some(path) = worktree.which("qcc") {
-            return Some(PathBuf::from(path));
-        }
-
-        if let Ok(path) = std::env::var("QCC_PATH") {
-            if !path.is_empty() {
-                let candidate = PathBuf::from(path);
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-            }
-        }
-
-        if let Ok(root) = std::env::var("BASILISK") {
-            if let Some(include_dir) = Self::normalize_basilisk_root(PathBuf::from(root)) {
-                let candidate = include_dir.join("qcc");
-                if candidate.exists() {
-                    return Some(candidate);
-                }
-            }
-        }
-
-        if let Ok(home) = std::env::var("HOME") {
-            let home_path = PathBuf::from(home);
-            for candidate in [home_path.join("basilisk"), home_path.join("basilisk/src")] {
-                if let Some(include_dir) = Self::normalize_basilisk_root(candidate) {
-                    let qcc = include_dir.join("qcc");
-                    if qcc.exists() {
-                        return Some(qcc);
-                    }
-                }
-            }
-        }
-
-        let repo_root = PathBuf::from(worktree.root_path());
-        for candidate in [repo_root.join("basilisk"), repo_root.join("basilisk/src")] {
-            if let Some(include_dir) = Self::normalize_basilisk_root(candidate) {
-                let qcc = include_dir.join("qcc");
-                if qcc.exists() {
-                    return Some(qcc);
-                }
-            }
-        }
-
-        None
-    }
-
-    fn detect_basilisk_root(worktree: &zed::Worktree) -> Option<PathBuf> {
-        // Check BASILISK_ROOT first (preferred new env var)
-        if let Ok(path) = std::env::var("BASILISK_ROOT") {
-            if let Some(src_dir) = Self::normalize_basilisk_root(PathBuf::from(path)) {
-                return Some(src_dir);
-            }
-        }
-
-        // Check BASILISK (legacy env var)
-        if let Ok(path) = std::env::var("BASILISK") {
-            if let Some(src_dir) = Self::normalize_basilisk_root(PathBuf::from(path)) {
-                return Some(src_dir);
-            }
-        }
-
-        // Check worktree root
-        let repo_root = PathBuf::from(worktree.root_path());
-        let candidates = [
-            repo_root.join("basilisk/src"),
-            repo_root.join("basilisk"),
-        ];
-        for candidate in candidates {
-            if let Some(src_dir) = Self::normalize_basilisk_root(candidate) {
-                return Some(src_dir);
-            }
-        }
-
-        // Check HOME directory
-        if let Ok(home) = std::env::var("HOME") {
-            let home_path = PathBuf::from(home);
-            let candidates = [
-                home_path.join("basilisk/src"),
-                home_path.join("basilisk"),
-            ];
-            for candidate in candidates {
-                if let Some(src_dir) = Self::normalize_basilisk_root(candidate) {
-                    return Some(src_dir);
-                }
-            }
-        }
-
-        None
-    }
-
-    fn refresh_compile_commands(&self, worktree: &zed::Worktree) -> Result<()> {
-        let root_path = PathBuf::from(worktree.root_path());
-        let build_dir = root_path.join("build");
-        std::fs::create_dir_all(&build_dir).with_context(|| {
-            format!(
-                "unable to create build directory at {}",
-                build_dir.display()
-            )
-        })?;
-
-        let compile_db_path = build_dir.join("compile_commands.json");
-
-        let qcc_binary = self
-            .qcc_path
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "qcc".to_string());
-
-        let include_flag = self
-            .basilisk_root
-            .as_ref()
-            .map(|path| format!("-I\"{}\"", path.display()));
-
-        #[derive(Serialize)]
-        struct CompileCommand {
-            directory: String,
-            file: String,
-            command: String,
-        }
-
-        let mut entries = Vec::new();
-        let exclude_dirs = &self.exclude_dirs;
-        for entry in WalkDir::new(&root_path)
-            .into_iter()
-            .filter_entry(|e| Self::is_included_directory(e, exclude_dirs))
-        {
-            let entry = entry.with_context(|| "unable to walk workspace")?;
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            if entry.path().extension().and_then(|ext| ext.to_str()) != Some("c") {
+        for (package, version) in REQUIRED_NPM_PACKAGES {
+            let installed = zed::npm_package_installed_version(package)?;
+            if installed.as_deref() == Some(version) {
                 continue;
             }
 
-            let file_path = entry.into_path();
-            let Some(parent) = file_path.parent() else {
-                continue;
-            };
-
-            let output_path = parent.join(file_path.file_stem().unwrap_or_default());
-
-            let mut command = format!(
-                "{qcc} -Wall -O2 -disable-dimensions {file} -o {output} -lm",
-                qcc = qcc_binary,
-                file = Self::quote_path(&file_path),
-                output = Self::quote_path(&output_path),
+            zed::set_language_server_installation_status(
+                language_server_id,
+                &zed::LanguageServerInstallationStatus::Downloading,
             );
 
-            if let Some(flag) = &include_flag {
-                command.push(' ');
-                command.push_str(flag);
+            if let Err(err) = zed::npm_install_package(package, version) {
+                let fallback = zed::npm_package_installed_version(package)?;
+                if fallback.is_none() {
+                    let message = format!(
+                        "failed to install required npm package '{package}@{version}': {err}"
+                    );
+                    zed::set_language_server_installation_status(
+                        language_server_id,
+                        &zed::LanguageServerInstallationStatus::Failed(message.clone()),
+                    );
+                    return Err(message);
+                }
             }
-
-            entries.push(CompileCommand {
-                directory: parent.display().to_string(),
-                file: file_path.display().to_string(),
-                command,
-            });
         }
 
-        if entries.is_empty() {
-            if !compile_db_path.exists() {
-                std::fs::write(&compile_db_path, "[]")
-                    .with_context(|| format!("failed to seed {}", compile_db_path.display()))?;
-            }
-        } else {
-            let payload = serde_json::to_string_pretty(&entries)
-                .with_context(|| "unable to serialize compile_commands.json")?;
-            std::fs::write(&compile_db_path, payload)
-                .with_context(|| format!("failed to write {}", compile_db_path.display()))?;
-        }
+        zed::set_language_server_installation_status(
+            language_server_id,
+            &zed::LanguageServerInstallationStatus::None,
+        );
 
+        self.dependencies_ready = true;
         Ok(())
     }
 
-    fn is_included_directory(entry: &DirEntry, exclude_dirs: &HashSet<String>) -> bool {
-        let name = entry.file_name().to_string_lossy();
-        let name_str = name.as_ref();
+    fn bundled_server_path(&self, language_server_id: &LanguageServerId) -> Result<String> {
+        let current_dir = env::current_dir().map_err(|err| err.to_string())?;
+        let server_path = sanitize_windows_path(current_dir).join(BUNDLED_SERVER_PATH);
 
-        // Always include . and .. for directory traversal
-        if matches!(name_str, "." | "..") {
-            return true;
+        if !fs::metadata(&server_path).is_ok_and(|meta| meta.is_file()) {
+            let message = format!(
+                "bundled qcc-lsp entrypoint not found at '{}'",
+                server_path.display()
+            );
+            zed::set_language_server_installation_status(
+                language_server_id,
+                &zed::LanguageServerInstallationStatus::Failed(message.clone()),
+            );
+            return Err(message);
         }
 
-        // Exclude directories in the exclude set
-        !exclude_dirs.contains(name_str)
+        Ok(server_path.to_string_lossy().to_string())
     }
 
-    fn quote_path(path: &Path) -> String {
-        format!("\"{}\"", path.display())
+    fn resolve_user_binary_path(path: &str, worktree: &zed::Worktree) -> String {
+        let path_obj = Path::new(path);
+        if path_obj.is_absolute() {
+            return path.to_string();
+        }
+
+        if let Some(found) = worktree.which(path) {
+            return found;
+        }
+
+        let worktree_candidate = PathBuf::from(worktree.root_path()).join(path);
+        worktree_candidate.to_string_lossy().to_string()
+    }
+
+    fn command_from_user_binary(
+        &self,
+        binary: zed::settings::CommandSettings,
+        worktree: &zed::Worktree,
+    ) -> Result<zed::Command> {
+        let raw_path = binary
+            .path
+            .ok_or_else(|| "lsp.qcc-lsp.binary.path is empty".to_string())?;
+
+        let command = Self::resolve_user_binary_path(&raw_path, worktree);
+        let args = binary.arguments.unwrap_or_default();
+        let env = binary
+            .env
+            .unwrap_or_default()
+            .into_iter()
+            .collect::<Vec<(String, String)>>();
+
+        Ok(zed::Command { command, args, env })
+    }
+
+    fn get_lsp_settings(worktree: &zed::Worktree) -> zed::settings::LspSettings {
+        LspSettings::for_worktree(SERVER_ID, worktree).unwrap_or_default()
     }
 }
 
@@ -275,66 +137,176 @@ impl zed::Extension for BasiliskExtension {
 
     fn language_server_command(
         &mut self,
-        _id: &zed::LanguageServerId,
+        language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
-    ) -> zed::Result<zed::Command> {
-        self.detect_environment(worktree)
-            .map_err(|err| err.to_string())?;
-        self.refresh_compile_commands(worktree)
-            .map_err(|err| err.to_string())?;
-
-        let clangd = self
-            .clangd_path
-            .clone()
-            .unwrap_or_else(|| "clangd".to_string());
-
-        let mut args = vec![
-            "--background-index".to_string(),
-            "--clang-tidy".to_string(),
-            "--header-insertion=never".to_string(),
-            format!("--compile-commands-dir={}/build", worktree.root_path()),
-        ];
-
-        if let Some(qcc) = &self.qcc_path {
-            args.push(format!("--query-driver={}", qcc.display()));
+    ) -> Result<zed::Command> {
+        let settings = Self::get_lsp_settings(worktree);
+        if let Some(binary) = settings.binary {
+            return self.command_from_user_binary(binary, worktree);
         }
 
-        let mut env_entries = Vec::new();
-        if let Some(root) = &self.basilisk_root {
-            let root_str = root.display().to_string();
-            env_entries.push(("BASILISK_ROOT".to_string(), root_str.clone()));
-            env_entries.push(("BASILISK".to_string(), root_str));
-        }
+        self.ensure_node_dependencies(language_server_id)?;
+
+        let node = zed::node_binary_path()?;
+        let server_script = self.bundled_server_path(language_server_id)?;
 
         Ok(zed::Command {
-            command: clangd,
-            args,
-            env: env_entries,
+            command: node,
+            args: vec![server_script, "--stdio".to_string()],
+            env: vec![],
         })
+    }
+
+    fn language_server_initialization_options(
+        &mut self,
+        _language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<Value>> {
+        let settings = Self::get_lsp_settings(worktree);
+        let mode = extract_clangd_mode(settings.settings.as_ref());
+
+        let mut init_options = settings.initialization_options.unwrap_or_else(|| json!({}));
+        if !init_options.is_object() {
+            init_options = json!({});
+        }
+
+        let mode_override = json!({
+            "basilisk": {
+                "clangd": {
+                    "mode": mode,
+                }
+            }
+        });
+
+        merge_json(&mut init_options, mode_override);
+        Ok(Some(init_options))
     }
 
     fn language_server_workspace_configuration(
         &mut self,
-        _language_server_id: &zed::LanguageServerId,
-        _worktree: &zed::Worktree,
-    ) -> zed::Result<Option<serde_json::Value>> {
-        let mut fallback_flags = vec![
-            "-std=c99".to_string(),
-            "-Wall".to_string(),
-            "-Wextra".to_string(),
-        ];
-        if let Some(root) = &self.basilisk_root {
-            fallback_flags.push(format!("-I\"{}\"", root.display()));
-        }
+        _language_server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<Value>> {
+        let settings = Self::get_lsp_settings(worktree);
+        let user_settings = settings.settings.unwrap_or_else(|| json!({}));
 
-        let config = serde_json::json!({
-            "clangd": {
-                "fallbackFlags": fallback_flags,
+        Ok(Some(json!({
+            "basilisk": user_settings,
+        })))
+    }
+}
+
+fn extract_clangd_mode(settings: Option<&Value>) -> String {
+    settings
+        .and_then(|value| value.get("clangd"))
+        .and_then(|value| value.get("mode"))
+        .and_then(Value::as_str)
+        .filter(|mode| matches!(*mode, "proxy" | "augment" | "disabled"))
+        .unwrap_or(DEFAULT_CLANGD_MODE)
+        .to_string()
+}
+
+fn merge_json(base: &mut Value, overlay: Value) {
+    match (base, overlay) {
+        (Value::Object(base_obj), Value::Object(overlay_obj)) => {
+            for (key, overlay_value) in overlay_obj {
+                if let Some(base_value) = base_obj.get_mut(&key) {
+                    merge_json(base_value, overlay_value);
+                } else {
+                    base_obj.insert(key, overlay_value);
+                }
             }
-        });
+        }
+        (base_value, overlay_value) => {
+            *base_value = overlay_value;
+        }
+    }
+}
 
-        Ok(Some(config))
+/// Sanitizes the given path to remove the leading `/` on Windows.
+///
+/// On macOS and Linux this is a no-op.
+///
+/// This is a workaround for https://github.com/bytecodealliance/wasmtime/issues/10415.
+fn sanitize_windows_path(path: PathBuf) -> PathBuf {
+    use zed_extension_api::{current_platform, Os};
+
+    let (os, _arch) = current_platform();
+    match os {
+        Os::Mac | Os::Linux => path,
+        Os::Windows => path
+            .to_string_lossy()
+            .to_string()
+            .trim_start_matches('/')
+            .into(),
     }
 }
 
 zed::register_extension!(BasiliskExtension);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clangd_mode_defaults_to_proxy() {
+        let mode = extract_clangd_mode(None);
+        assert_eq!(mode, "proxy");
+    }
+
+    #[test]
+    fn clangd_mode_accepts_valid_values() {
+        let settings = json!({
+            "clangd": {
+                "mode": "augment"
+            }
+        });
+        let mode = extract_clangd_mode(Some(&settings));
+        assert_eq!(mode, "augment");
+    }
+
+    #[test]
+    fn clangd_mode_rejects_invalid_values() {
+        let settings = json!({
+            "clangd": {
+                "mode": "random"
+            }
+        });
+        let mode = extract_clangd_mode(Some(&settings));
+        assert_eq!(mode, "proxy");
+    }
+
+    #[test]
+    fn merge_json_overlays_nested_values() {
+        let mut base = json!({
+            "basilisk": {
+                "clangd": {
+                    "mode": "proxy",
+                    "enabled": true
+                }
+            }
+        });
+
+        let overlay = json!({
+            "basilisk": {
+                "clangd": {
+                    "mode": "augment"
+                }
+            }
+        });
+
+        merge_json(&mut base, overlay);
+
+        assert_eq!(
+            base,
+            json!({
+                "basilisk": {
+                    "clangd": {
+                        "mode": "augment",
+                        "enabled": true
+                    }
+                }
+            })
+        );
+    }
+}
