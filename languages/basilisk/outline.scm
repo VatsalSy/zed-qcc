@@ -1,3 +1,4 @@
-; Intentionally empty for now. The C grammar's declarator variants differ
-; enough across parser versions that aggressive outline patterns can fail
-; language loading in Zed.
+; Keep outline patterns intentionally conservative so language loading remains
+; compatible with Zed's bundled C grammar.
+(function_definition
+  declarator: (_) @name) @item
