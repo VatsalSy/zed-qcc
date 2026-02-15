@@ -1,5 +1,5 @@
 name = "Basilisk C"
-grammar = "basilisk"
+grammar = "c"
 path_suffixes = ["c", "h"]
 line_comments = ["// "]
 autoclose_before = ";:.,=}])>"
