@@ -5,7 +5,7 @@ schema_version = 1
 authors = ["Zed Basilisk Contributors"]
 description = "Basilisk C language support powered by qcc-lsp"
 repository = "https://github.com/VatsalSy/zed-qcc"
-languages = ["languages/basilisk/config.toml"]
+languages = ["languages/basilisk"]
 
 [language_servers.qcc-lsp]
 name = "qcc-lsp"
